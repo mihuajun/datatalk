@@ -1,0 +1,52 @@
+{
+  "name": "@insightpilot/chat-bi",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "dev": "bash scripts/run-next.sh dev",
+    "build": "bash scripts/run-next.sh build",
+    "start": "bash scripts/run-next.sh start",
+    "typecheck": "tsc --noEmit",
+    "test:report-filters": "tsx scripts/verify-report-filters.ts",
+    "test:metric-knowledge": "tsx scripts/verify-metric-knowledge.ts",
+    "db:init-members": "node scripts/init-members.cjs",
+    "db:init-data-sources": "node scripts/init-data-sources.cjs",
+    "db:init-metric-knowledge": "node scripts/init-metric-knowledge.cjs",
+    "db:init-reports": "node scripts/init-reports.cjs"
+  },
+  "dependencies": {
+    "@databricks/sql": "^2.0.0",
+    "@duckdb/node-api": "^1.5.5-r.4",
+    "@elastic/elasticsearch": "^9.5.0",
+    "@google-cloud/bigquery": "^9.0.2",
+    "@types/pg": "^8.21.0",
+    "lucide-react": "^0.511.0",
+    "mongodb": "^7.5.0",
+    "mssql": "^12.7.0",
+    "mysql2": "^3.23.2",
+    "next": "^16.0.0",
+    "oracledb": "^7.0.1",
+    "pg": "^8.23.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "redis": "^6.2.1",
+    "snowflake-sdk": "^3.2.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/mssql": "^12.3.0",
+    "@types/node": "^22.15.30",
+    "@types/oracledb": "^7.0.2",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.12",
+    "typescript": "^5.8.3"
+  }
+}

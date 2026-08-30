@@ -1,0 +1,13 @@
+.git
+.gitignore
+.next
+node_modules
+.runtime
+.dbg
+config/config.local.yaml
+.env*
+*.tsbuildinfo
+.DS_Store
+debug-*.md
+doc
+docs

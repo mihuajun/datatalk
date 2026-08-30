@@ -1,0 +1,12 @@
+.next/
+node_modules/
+.runtime/
+.dbg/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+config/config.local.yaml

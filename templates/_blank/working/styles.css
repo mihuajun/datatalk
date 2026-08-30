@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: #17243a;
+  background: #f4f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f4f7fb;
+}
+
+.report-page {
+  min-height: 100vh;
+  padding: 40px 24px;
+}
+
+#report-root {
+  max-width: 960px;
+  min-height: calc(100vh - 80px);
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .report-page {
+    padding: 20px 16px;
+  }
+}

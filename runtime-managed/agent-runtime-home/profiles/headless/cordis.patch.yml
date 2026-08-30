@@ -1,0 +1,16 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+- insert:
+    - id: report-tools
+      name: '../../plugins/report-tools.mjs'
+    - id: web-search-proxy
+      name: '../../plugins/web-search-proxy.mjs'
+
+# Search is provided by the host proxy below. Do not expose the built-in
+# DeepSeek-backed provider or its model-facing web_search tool.
+- id: web-search-deepseek
+  disabled: true
+
+- id: tool-web
+  disabled: true

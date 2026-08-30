@@ -1,0 +1,13 @@
+# Runtime configuration template.
+# The application uses MySQL only when DATABASE_URL, DATABASE_USERNAME and
+# DATABASE_PASSWORD are all configured. Otherwise it creates and initializes
+# the embedded SQLite database at SQLITE_DATABASE_PATH (or the runtime default).
+# Supports `${ENV_NAME}` and `${ENV_NAME:default_value}` for other settings.
+
+database:
+  url: "${DATABASE_URL}"
+  username: "${DATABASE_USERNAME}"
+  password: "${DATABASE_PASSWORD}"
+
+reportEditLock:
+  enabled: "${REPORT_EDIT_LOCK_ENABLED:false}"

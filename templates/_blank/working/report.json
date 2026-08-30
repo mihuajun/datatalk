@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.0",
+  "reportCode": "__REPORT_CODE__",
+  "tenantId": "__TENANT_ID__",
+  "name": "__REPORT_TITLE__",
+  "entry": "page.html",
+  "format": "web",
+  "filters": [],
+  "updatedAt": "__UPDATED_AT__"
+}

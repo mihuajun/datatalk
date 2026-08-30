@@ -1,0 +1,253 @@
+:root {
+  --fd-blue: #2f78c4;
+  --fd-blue-soft: #e9f3ff;
+  --fd-line: #d6dee8;
+  --fd-line-soft: #edf2f7;
+  --fd-text: #26364a;
+  --fd-muted: #7b8797;
+  --fd-control-height: 40px;
+}
+
+.fd-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fd-field > label {
+  padding-left: 1px;
+  color: var(--fd-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.fd-multi-select {
+  position: relative;
+  min-width: 0;
+}
+
+.fd-ms-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: var(--fd-control-height);
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--fd-line);
+  border-radius: 7px;
+  background: #fff;
+  transition: border-color .18s, box-shadow .18s;
+}
+
+.fd-multi-select.is-open .fd-ms-control {
+  border-color: #4b91d1;
+  box-shadow: 0 0 0 3px #4b91d11c;
+}
+
+.fd-ms-trigger,
+.fd-ms-clear {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.fd-ms-trigger {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+  height: 100%;
+  padding: 0;
+  text-align: left;
+}
+
+.fd-ms-value,
+.fd-ms-count {
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--fd-blue-soft);
+  color: #2f86df;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-ms-value {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 8px;
+}
+
+.fd-ms-value.is-placeholder {
+  background: transparent;
+  color: #9aa7b5;
+}
+
+.fd-ms-count {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+}
+
+.fd-ms-chevron {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin: -4px 2px 0 2px;
+  border-right: 1.5px solid #7b8797;
+  border-bottom: 1.5px solid #7b8797;
+  transform: rotate(45deg);
+  transition: transform .18s;
+}
+
+.fd-multi-select.is-open .fd-ms-chevron {
+  margin-top: 4px;
+  transform: rotate(225deg);
+}
+
+.fd-ms-clear {
+  display: none;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border-radius: 4px;
+  color: #8b98a6;
+  font-size: 18px;
+  line-height: 20px;
+}
+
+.fd-ms-clear:hover {
+  background: #f3f6fa;
+  color: var(--fd-text);
+}
+
+.fd-multi-select.has-value .fd-ms-clear {
+  display: block;
+}
+
+.fd-ms-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(var(--fd-control-height) + 7px);
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  border: 1px solid #cbd9e8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 28px #24415c2e;
+}
+
+.fd-ms-menu[hidden] {
+  display: none;
+}
+
+.fd-ms-search {
+  height: 42px;
+  padding: 6px 11px;
+  border-bottom: 1px solid var(--fd-line-soft);
+}
+
+.fd-ms-search input {
+  width: 100%;
+  height: 29px;
+  padding: 0 3px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fd-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.fd-ms-options {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.fd-ms-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 13px;
+  border: 0;
+  border-bottom: 1px solid var(--fd-line-soft);
+  background: #fff;
+  color: #3b91ed;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fd-ms-option:last-child {
+  border-bottom: 0;
+}
+
+.fd-ms-option:hover,
+.fd-ms-option[aria-selected="true"] {
+  background: #edf6ff;
+}
+
+.fd-ms-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-ms-check {
+  flex: 0 0 auto;
+  margin-left: 12px;
+  color: #268cff;
+  font-weight: 700;
+}
+
+.fd-ms-status {
+  padding: 14px;
+  color: #98a6b6;
+  font-size: 13px;
+  text-align: center;
+}
+
+.fd-ms-status.is-error {
+  color: #b45309;
+}
+
+.fd-ms-trigger:focus-visible,
+.fd-ms-clear:focus-visible,
+.fd-ms-option:focus-visible,
+.fd-ms-search input:focus-visible {
+  outline: 3px solid #4b91d14d;
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .fd-ms-menu {
+    position: fixed;
+    top: auto;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    max-height: min(420px, calc(100vh - 32px));
+  }
+
+  .fd-ms-options {
+    max-height: min(300px, calc(100vh - 106px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-ms-control,
+  .fd-ms-chevron {
+    transition: none;
+  }
+}

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Form Design"
+  short_description: "Build reusable report form controls"
+  default_prompt: "Use $form-design to add a polished, searchable multi-select form control to a web report."
+  brand_color: "#2F78C4"
