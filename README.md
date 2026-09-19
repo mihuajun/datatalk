@@ -6,6 +6,18 @@ DataTalk Studio 将传统 BI 中的数据源、指标、查询、可视化和报
 
 项目目前处于持续开发阶段。页面、API、数据模型和 Agent 工具接口可能发生变化，不建议在没有完成安全加固、权限审查和备份策略的情况下直接用于生产环境。
 
+## 官网与企业服务
+
+DataTalk Studio 是 DataTalk 的开源报表工作台。你可以先在官网浏览公开报告和模板，了解产品工作流，再进入 Studio 使用或二次开发：
+
+- [访问 DataTalk 官网](https://datatalk.alenfive.top/?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)：发现公开报告、数据模板、产品能力和应用场景。
+- [浏览公开报告](https://datatalk.alenfive.top/reports?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)：阅读数据故事、企业分析作品，并将可复用的报告复制到 Studio。
+- [了解产品工作流](https://datatalk.alenfive.top/product?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)：了解从连接数据、确认指标到生成和发布报告的完整流程。
+- [查看应用场景](https://datatalk.alenfive.top/solutions?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)：了解 DataTalk 在企业经营分析和行业场景中的应用方式。
+- [在线进入 DataTalk Studio](https://studio.alenfive.top/?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)：直接体验在线 Studio。
+
+DataTalk 的官网和后续企业服务将围绕 `datatalk-web`、企业 SaaS 和私有化部署持续建设。开源仓库主要聚焦 Studio 的产品能力和工程实现；企业客户可通过[官网产品与应用场景页面](https://datatalk.alenfive.top/product?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)了解最新服务形态、行业方案和部署选项。
+
 ## 能力概览
 
 - **对话式报表开发**：通过自然语言创建报表、调整指标、修改筛选条件、更新图表和编辑页面结构。
