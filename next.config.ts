@@ -2,7 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   reactStrictMode: true,
+  experimental: {
+    // Allow multipart report prompts to carry the configured 100 MB attachment budget.
+    proxyClientMaxBodySize: "160mb",
+  },
   serverExternalPackages: [
     "@databricks/sql",
     "@duckdb/node-api",

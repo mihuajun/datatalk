@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import path from "node:path";
 
 import ts from "typescript";
+import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2/promise";
 
 import { getDbPool } from "@/lib/server/mysql";
@@ -8,7 +11,8 @@ import type { ReportFilterManifest } from "@/lib/report-filters";
 import { hashPublicLinkPassword, hasPublicLinkAccess } from "@/lib/server/public-link-security";
 import { readReportFilterManifest } from "@/lib/server/report-filter-runtime";
 import { executeReportQuery } from "@/lib/server/report-query-gateway";
-import { resolveReportSourcePath } from "@/lib/server/report-workspace";
+import { isAllowedReportDataFile, resolveReportSourcePath } from "@/lib/server/report-workspace";
+import { getPublishedResourceReportTarget } from "@/lib/server/resource-repository";
 
 type RuntimeSource = "working" | "release";
 type RuntimeFilters = Record<string, unknown>;
@@ -38,6 +42,8 @@ type RuntimeHandler =
 type RuntimeModule = {
   handlers: Record<string, RuntimeHandler>;
 };
+
+const REPORT_DATA_RUNTIME_EXTENSIONS = new Set([".json", ".csv", ".tsv", ".xlsx", ".xls"]);
 
 type ReportRuntimeTarget = {
   tenantId: number;
@@ -95,6 +101,48 @@ function getRuntimeEntry(handler: RuntimeHandler) {
   throw new Error("REPORT_DATA_HANDLER_INVALID");
 }
 
+function resolveReportDataImportPath(tenantId: number, reportCode: string, specifier: string, releaseVersion?: number | null) {
+  if (typeof specifier !== "string") throw new Error(`REPORT_SERVER_IMPORT_NOT_ALLOWED: ${String(specifier)}`);
+  const normalizedSpecifier = specifier.replaceAll("\\", "/");
+  if (!normalizedSpecifier.startsWith("./")) throw new Error(`REPORT_SERVER_IMPORT_NOT_ALLOWED: ${specifier}`);
+  const fileName = path.posix.normalize(normalizedSpecifier.slice(2));
+  if (!isAllowedReportDataFile(fileName) || !REPORT_DATA_RUNTIME_EXTENSIONS.has(path.posix.extname(fileName).toLowerCase())) {
+    throw new Error(`REPORT_SERVER_IMPORT_NOT_ALLOWED: ${specifier}`);
+  }
+  return resolveReportSourcePath(tenantId, reportCode, fileName, releaseVersion ?? undefined);
+}
+
+function readReportTabularFile(filePath: string) {
+  const workbook = XLSX.read(fsSync.readFileSync(filePath), {
+    type: "buffer",
+    cellDates: true,
+  });
+  return {
+    sheets: workbook.SheetNames.map((name) => ({
+      name,
+      rows: XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[name], {
+        defval: null,
+        raw: true,
+      }),
+    })),
+  };
+}
+
+function readReportDataFile(tenantId: number, reportCode: string, specifier: string, releaseVersion?: number | null) {
+  const filePath = resolveReportDataImportPath(tenantId, reportCode, specifier, releaseVersion);
+  const extension = path.extname(filePath).toLowerCase();
+  try {
+    if (extension === ".json") return JSON.parse(fsSync.readFileSync(filePath, "utf8")) as unknown;
+    if ([".csv", ".tsv", ".xlsx", ".xls"].includes(extension)) return readReportTabularFile(filePath);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+    if (code === "ENOENT") throw new Error(`REPORT_DATA_FILE_NOT_FOUND: ${specifier}`);
+    if (extension === ".json" && error instanceof SyntaxError) throw new Error(`REPORT_DATA_JSON_INVALID: ${specifier}`);
+    throw new Error(`REPORT_DATA_FILE_READ_FAILED: ${specifier}`);
+  }
+  throw new Error(`REPORT_DATA_FILE_UNSUPPORTED: ${specifier}`);
+}
+
 async function resolveRuntimeModulePath(tenantId: number, reportCode: string, source: RuntimeSource, releaseVersion?: number | null) {
   const version = source === "release" ? releaseVersion : undefined;
   const candidates = ["server.js", "server.ts"];
@@ -134,9 +182,7 @@ async function readRuntimeModule(tenantId: number, reportCode: string, source: R
     }
   }
   const module = { exports: {} as Record<string, unknown> };
-  const require = (specifier: string) => {
-    throw new Error(`REPORT_SERVER_IMPORT_NOT_ALLOWED: ${specifier}`);
-  };
+  const require = (specifier: string) => readReportDataFile(tenantId, reportCode, specifier, version);
   const executable = transpileSource ? result.outputText : sourceText;
   const run = new Function("exports", "module", "require", `${executable}\n//# sourceURL=${filePath.replaceAll("\\", "/")}`);
   run(module.exports, module, require);
@@ -203,6 +249,16 @@ export async function getPublicReportRuntimeTarget(publicLinkCode: string): Prom
     tenantId: Number(link.tenant_id),
     reportCode: link.code,
     releaseVersion: Number(link.current_release_version),
+  };
+}
+
+export async function getPublishedResourceRuntimeTarget(reportCode: string): Promise<ReportRuntimeTarget | null> {
+  const target = await getPublishedResourceReportTarget(reportCode);
+  if (!target) return null;
+  return {
+    tenantId: target.tenantId,
+    reportCode: target.reportCode,
+    releaseVersion: target.version,
   };
 }
 

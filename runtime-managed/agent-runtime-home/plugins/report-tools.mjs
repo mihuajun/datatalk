@@ -1,7 +1,7 @@
 import { defineTool } from "../../deepseek-harness/node_modules/@deepseek-ai/dsh-tools/lib/index.js";
 
 export const name = "report-tools";
-export const inject = ["tools"];
+export const inject = ["tools", "attachments"];
 
 function resolveBaseUrl() {
   const value = (process.env.REPORT_AGENT_TOOLS_BASE_URL || "").trim().replace(/\/+$/, "");
@@ -12,6 +12,37 @@ function resolveBaseUrl() {
 
 function jsonText(value) {
   return [{ type: "text", text: JSON.stringify(value) }];
+}
+
+function previewInspectionContent(value) {
+  const { screenshot, ...metadata } = value && typeof value === "object" ? value : { value };
+  const content = [{ type: "text", text: JSON.stringify(metadata) }];
+  if (screenshot && typeof screenshot === "object" && screenshot.attachmentId) {
+    content.push({ type: "image", attachment: screenshot });
+  }
+  return content;
+}
+
+async function attachPreviewScreenshot(value, ctx) {
+  if (!value || typeof value !== "object" || typeof value.screenshotDataUrl !== "string") return value;
+  const { screenshotDataUrl, ...metadata } = value;
+  const match = screenshotDataUrl.match(/^data:(image\/png);base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match) return { ...metadata, screenshotAvailable: true, screenshotError: "REPORT_CAPTURE_INVALID" };
+
+  try {
+    const attachments = ctx.get("attachments");
+    if (!attachments || typeof attachments.saveImage !== "function") {
+      return { ...metadata, screenshotAvailable: true, screenshotError: "REPORT_CAPTURE_ATTACHMENT_UNAVAILABLE" };
+    }
+    const stored = await attachments.saveImage({
+      data: Uint8Array.from(Buffer.from(match[2], "base64")),
+      mediaType: "image/png",
+      name: "report-preview.png",
+    });
+    return { ...metadata, screenshotAvailable: true, screenshot: stored };
+  } catch (error) {
+    return { ...metadata, screenshotAvailable: true, screenshotError: error instanceof Error ? error.message : "REPORT_CAPTURE_ATTACHMENT_FAILED" };
+  }
 }
 
 async function callTool(tool, args, exec) {
@@ -39,6 +70,32 @@ async function callTool(tool, args, exec) {
 }
 
 export function apply(ctx) {
+  ctx.tools.register(defineTool({
+    name: "inspect_report_preview",
+    description: "检查当前报表会话中可见的编辑器预览。ok:true 和截图成功仅代表取证成功，不代表视觉合格。使用 layoutEvidence 的设计像素坐标、计算样式、同组间距及采样覆盖率，结合截图核对信息层级、字号、留白、对齐、可读性和裁切；旧 elements[].rect 只用于截图聚焦。possibleClipping 和异常间距只是疑点，核实意图和局部截图后才能定性，不能对所有报表使用固定字号/间距阈值。创建整份报告或跨多个区块修改时检查 full 截图，疑点用 elements 中的 selector 取 element 截图；确认问题后修复并在最新 working 版本下重截。预览超时可等待重试，最终证据不足时标为未验证，不能只截图就结束。",
+    parameters: {
+      includeScreenshot: { type: "boolean", description: "是否返回当前可见预览的截图，默认 false；需要比较整体视觉、间距或图表外观时设为 true。" },
+      screenshotMode: { type: "string", enum: ["thumbnail", "full", "element"], description: "截图模式：thumbnail 返回首屏缩略图；full 返回完整报表；element 仅返回 screenshotSelector 指定的元素。" },
+      screenshotSelector: { type: "string", description: "element 模式必填。优先使用上一次检查结果 elements 中返回的 selector，也可以使用报表源码中的稳定 CSS 选择器。" },
+    },
+    async execute(args, exec) {
+      let result;
+      try {
+        result = await callTool("inspect_report_preview", args, exec);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "REPORT_PREVIEW_INSPECTION_TIMEOUT") throw error;
+        result = { ok: false, error: error.message, checkedAt: new Date().toISOString() };
+      }
+      const evidence = await attachPreviewScreenshot(result, ctx);
+      const retryable = evidence.error === "REPORT_PREVIEW_INSPECTION_TIMEOUT" || evidence.screenshotError === "REPORT_PREVIEW_INSPECTION_TIMEOUT";
+      return { ...evidence, ...(retryable ? { retryable: true } : {}), visualAssessment: "not_assessed", visualReviewRequired: args.includeScreenshot === true };
+    },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => previewInspectionContent(value),
+    },
+  }));
+
   ctx.tools.register(defineTool({
     name: "list_data_sources",
     description: "列出当前报表会话所在租户可用的数据源。",
@@ -125,6 +182,22 @@ export function apply(ctx) {
     },
     async execute(args, exec) {
       return callTool("preview_sql", args, exec);
+    },
+  }));
+
+  ctx.tools.register(defineTool({
+    name: "list_metric_knowledge",
+    description: "列出当前租户已确认、可复用的指标口径；可按关键词筛选。",
+    parameters: {
+      keyword: { type: "string", description: "可选关键词，用于匹配指标名称、别名或定义文本。" },
+      limit: { type: "integer", description: "最多返回多少个指标，默认 20，最多 100。" },
+    },
+    output: {
+      schema: { type: "json" },
+      render: (_args, value) => jsonText(value),
+    },
+    async execute(args, exec) {
+      return callTool("list_metric_knowledge", args, exec);
     },
   }));
 

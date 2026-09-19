@@ -33,9 +33,20 @@ async function main() {
   const connection = await mysql.createConnection(databaseConfig);
   try {
     await addColumnIfMissing(connection, "email", "varchar(160) NULL AFTER username");
+    await addColumnIfMissing(connection, "phone", "varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER username");
     await addColumnIfMissing(connection, "role", "varchar(20) NOT NULL DEFAULT 'developer' AFTER email");
     await addColumnIfMissing(connection, "last_active", "timestamp NULL AFTER status");
-    await connection.query("UPDATE tenant_user SET role = CASE WHEN role = '管理员' THEN 'admin' WHEN role = '开发者' THEN 'developer' ELSE role END WHERE role IN ('管理员', '开发者')");
+    const [phoneIndexRows] = await connection.query("SHOW INDEX FROM tenant_user WHERE Key_name = ?", ["uq_tenant_user_phone"]);
+    if (phoneIndexRows.length === 0) await connection.query("ALTER TABLE tenant_user ADD UNIQUE KEY uq_tenant_user_phone (phone)");
+    await connection.query(`UPDATE tenant_user
+      SET role = CASE
+        WHEN LOWER(TRIM(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin') OR role = '超级管理员' THEN 'administrator'
+        WHEN role IN ('管理员', '租户管理员') THEN 'admin'
+        WHEN role = '开发者' THEN 'developer'
+        ELSE role
+      END
+      WHERE LOWER(TRIM(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin')
+         OR role IN ('超级管理员', '管理员', '租户管理员', '开发者')`);
 
     await connection.query(
       "UPDATE tenant_user SET email = CONCAT(username, '@datatalk.local') WHERE email IS NULL OR email = ''",

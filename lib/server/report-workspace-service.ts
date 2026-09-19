@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { getDbPool } from "@/lib/server/mysql";
 import type { RowDataPacket } from "mysql2/promise";
 import { commitWorkspace, deleteReportSourceFile, getWorkspaceHead, getWorkspaceStatus, restoreWorkspace, writeReportSourceFile } from "@/lib/server/local-git";
+import { buildReleaseThumbnailUrl, writeReleaseThumbnail, writeResourceThumbnailDataUrl } from "@/lib/server/report-release-thumbnail";
 import { getReportDetailByCode } from "@/lib/server/report-repository";
 import { getReportEditLock, isReportEditLockEnabled } from "@/lib/server/report-edit-lock";
 import { getReportWorkspacePath, initializeReportWorkspace, assertReportCode, isAllowedReportWorkingFile, resolveReportSourcePath, resolveReportWorkingPath } from "@/lib/server/report-workspace";
@@ -12,8 +13,83 @@ import { validateReportWorkspace } from "@/lib/server/report-schema";
 
 export type ReportChangeSet = { files: Record<string, string>; deleteFiles?: string[] };
 
+type ReleaseMetadataRow = RowDataPacket & {
+  tenant_name: string | null;
+  folder_name: string | null;
+};
+
 function auditError(code: string) { const error = new Error(code); Object.assign(error, { code }); return error; }
-function fingerprint(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+
+function optionalText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function releaseDescription(definition: unknown) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) return null;
+  const record = definition as Record<string, unknown>;
+  return optionalText(record.description) || optionalText(record.subTitle);
+}
+
+function releaseDisplayName(definition: unknown, fallback: string) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) return fallback;
+  return optionalText((definition as Record<string, unknown>).title) || fallback;
+}
+
+function releaseRemark(definition: unknown) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) return null;
+  return optionalText((definition as Record<string, unknown>).remark);
+}
+
+function releaseThumbnailUrl(definition: unknown) {
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) return null;
+  const record = definition as Record<string, unknown>;
+  return optionalText(record.thumbnailUrl) || optionalText(record.thumbnail) || optionalText(record.coverImage);
+}
+
+async function ensureReleaseCategory(connection: any, tenantId: number, categoryName: string) {
+  const normalizedName = categoryName.trim();
+  const [rows] = await connection.query(
+    `SELECT id, name
+       FROM report_release_category
+      WHERE tenant_id = ?
+        AND name IN (?, '未分类')
+      ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, sort_order ASC, id ASC
+      LIMIT 1`,
+    [tenantId, normalizedName || "未分类", normalizedName || "未分类"],
+  ) as [Array<RowDataPacket & { id: number; name: string }>, unknown[]];
+
+  if (rows[0]) {
+    return {
+      id: Number(rows[0].id),
+      name: String(rows[0].name || "未分类"),
+    };
+  }
+
+  return {
+    id: null,
+    name: normalizedName || "未分类",
+  };
+}
+
+async function loadReleaseMetadata(tenantId: number, reportCode: string, definition: unknown) {
+  const [rows] = await getDbPool().query<Array<ReleaseMetadataRow>>(
+    `SELECT t.name AS tenant_name, f.name AS folder_name
+       FROM tenant_report r
+       LEFT JOIN tenant t ON t.id = r.tenant_id
+       LEFT JOIN tenant_report_folder f ON f.id = r.folder_id
+      WHERE r.tenant_id = ? AND r.code = ? AND r.deleted_at IS NULL
+      LIMIT 1`,
+    [tenantId, reportCode],
+  );
+  const metadata = rows[0];
+  return {
+    publisherTenantName: optionalText(metadata?.tenant_name),
+    categoryName: optionalText(metadata?.folder_name) || "未分类",
+    description: releaseDescription(definition),
+    remark: releaseRemark(definition),
+    thumbnailUrl: releaseThumbnailUrl(definition),
+  };
+}
 
 async function assertReportEditLock(tenantId: number, reportCode: string, userId?: number, lockToken?: string) {
   if (!isReportEditLockEnabled()) return;
@@ -229,7 +305,7 @@ export async function restoreReportEditToCommit(input: { tenantId: number; repor
   }
 }
 
-export async function publishReport(tenantId: number, reportCode: string, userId: number) {
+export async function publishReport(tenantId: number, reportCode: string, userId: number, options?: { resourceThumbnailDataUrl?: string | null }) {
   const pool = getDbPool();
   let report!: Awaited<ReturnType<typeof ensureReportOwnership>>;
   let sourceCommit: string | null = null;
@@ -239,6 +315,7 @@ export async function publishReport(tenantId: number, reportCode: string, userId
   let releaseStarted = false;
   try {
     report = await ensureReportOwnership(tenantId, reportCode);
+    const metadata = await loadReleaseMetadata(tenantId, reportCode, report.definition);
     const validation = await validateReportWorkspace(tenantId, reportCode);
     if (!validation.valid) throw auditError("REPORT_VALIDATION_FAILED");
     sourceCommit = await getWorkspaceHead(tenantId, reportCode); if (!sourceCommit) throw auditError("WORKING_NOT_COMMITTED");
@@ -248,7 +325,35 @@ export async function publishReport(tenantId: number, reportCode: string, userId
     releasePath = path.join(releasesPath, `v${version}`); tempPath = path.join(releasesPath, `.v${version}.${randomUUID()}.tmp`);
     await fs.mkdir(releasesPath, { recursive: true });
     await fs.rm(tempPath, { recursive: true, force: true });
-    await fs.cp(path.join(root, "working"), tempPath, { recursive: true });
+    const workingPath = path.join(root, "working");
+    await fs.cp(workingPath, tempPath, {
+      recursive: true,
+      filter: (source) => {
+        const relativePath = path.relative(workingPath, source);
+        return relativePath !== "runtime" && !relativePath.startsWith(`runtime${path.sep}`);
+      },
+    });
+    await writeReleaseThumbnail({
+      tenantId,
+      reportCode,
+      version,
+      reportName: report.report.name,
+      tenantName: metadata.publisherTenantName,
+      categoryName: metadata.categoryName,
+      description: metadata.description,
+      targetDirectory: tempPath,
+    });
+    const resourceThumbnailDataUrl = optionalText(options?.resourceThumbnailDataUrl);
+    if (resourceThumbnailDataUrl) {
+      await writeResourceThumbnailDataUrl({
+        tenantId,
+        reportCode,
+        version,
+        dataUrl: resourceThumbnailDataUrl,
+        targetDirectory: tempPath,
+      });
+    }
+    const releaseThumbnailUrl = buildReleaseThumbnailUrl(reportCode, version);
     const releaseFiles = await fs.readdir(tempPath, { recursive: true });
     for (const entry of releaseFiles) { const target = path.join(tempPath, String(entry)); const stat = await fs.stat(target); if (stat.isFile()) await fs.chmod(target, 0o444); }
     const releaseMeta = path.join(tempPath, "release.json"); await fs.writeFile(releaseMeta, JSON.stringify({ version, sourceCommitHash: sourceCommit }, null, 2)); await fs.chmod(releaseMeta, 0o444);
@@ -257,7 +362,26 @@ export async function publishReport(tenantId: number, reportCode: string, userId
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      await connection.execute("INSERT INTO report_release (tenant_id, report_code, version, source_commit_hash, status, created_by) VALUES (?, ?, ?, ?, 'published', ?)", [tenantId, reportCode, version, sourceCommit, userId]);
+      const category = await ensureReleaseCategory(connection, tenantId, metadata.categoryName);
+      await connection.execute(
+        `INSERT INTO report_release
+          (tenant_id, report_code, version, source_commit_hash, thumbnail_url, publisher_tenant_name, view_count, like_count, display_name, remark, description, category_id, category_name, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 'published', ?)`,
+        [
+          tenantId,
+          reportCode,
+          version,
+          sourceCommit,
+          metadata.thumbnailUrl || releaseThumbnailUrl,
+          metadata.publisherTenantName,
+          releaseDisplayName(report.definition, report.report.name),
+          metadata.remark,
+          metadata.description,
+          category.id,
+          category.name,
+          userId,
+        ],
+      );
       await connection.execute("UPDATE tenant_report SET current_release_version=?, release_status='已发布', status='已发布' WHERE tenant_id=? AND code=? AND deleted_at IS NULL", [version, tenantId, reportCode]);
       await connection.commit();
     } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -276,7 +400,6 @@ export async function publishReport(tenantId: number, reportCode: string, userId
 
 export async function rollbackRelease(tenantId: number, reportCode: string, version: number) {
   const [rows] = await getDbPool().query<Array<RowDataPacket & { version: number }>>("SELECT version FROM report_release WHERE tenant_id=? AND report_code=? AND version=? LIMIT 1", [tenantId, reportCode, version]); if (!rows[0]) throw auditError("RELEASE_NOT_FOUND");
-  await getDbPool().execute("UPDATE tenant_report SET current_release_version=?, release_status='已发布', status='已发布' WHERE tenant_id=? AND code=? AND deleted_at IS NULL", [version, tenantId, reportCode]); return { version };
+  await getDbPool().execute("UPDATE tenant_report SET current_release_version=?, release_status='已发布', status='已发布' WHERE tenant_id=? AND code=? AND deleted_at IS NULL", [version, tenantId, reportCode]);
+  return { version };
 }
-
-export { fingerprint };

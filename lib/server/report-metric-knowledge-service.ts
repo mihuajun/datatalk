@@ -257,6 +257,36 @@ export async function searchMetricKnowledge(tenantId: number, intent: MetricSear
   } as const;
 }
 
+export async function listMetricKnowledge(tenantId: number, input?: {
+  keyword?: unknown;
+  limit?: unknown;
+}) {
+  const keyword = trimText(input?.keyword, 160);
+  const normalizedKeyword = normalizeMetricTerm(keyword);
+  const limit = clampLimit(input?.limit, 20, 100);
+  const [rows] = await getDbPool().query<MetricKnowledgeRow[]>(
+    `SELECT id, metric_key, name, normalized_name, aliases_json, definition_json, status,
+            version, fingerprint, accepted_count, rejected_count, updated_at
+       FROM tenant_metric_knowledge
+      WHERE tenant_id=? AND status='verified'
+        AND (?='' OR normalized_name LIKE ? OR search_text LIKE ?)
+      ORDER BY accepted_count DESC, updated_at DESC
+      LIMIT ?`,
+    [
+      tenantId,
+      normalizedKeyword,
+      `%${normalizedKeyword}%`,
+      `%${normalizedKeyword}%`,
+      limit,
+    ],
+  );
+
+  return {
+    keyword,
+    items: rows.map(metricView),
+  } as const;
+}
+
 async function findExistingMetric(
   executor: QueryExecutor,
   tenantId: number,

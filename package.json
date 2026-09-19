@@ -11,7 +11,10 @@
     "start": "bash scripts/run-next.sh start",
     "typecheck": "tsc --noEmit",
     "test:report-filters": "tsx scripts/verify-report-filters.ts",
+    "test:ai-artifacts": "tsx scripts/verify-report-ai-artifacts.ts",
+    "test:report-editor-intent": "tsx scripts/verify-report-editor-intent.ts",
     "test:metric-knowledge": "tsx scripts/verify-metric-knowledge.ts",
+    "test:image-gen": "tsx scripts/verify-datatalk-image-gen.ts",
     "db:init-members": "node scripts/init-members.cjs",
     "db:init-data-sources": "node scripts/init-data-sources.cjs",
     "db:init-metric-knowledge": "node scripts/init-metric-knowledge.cjs",
@@ -23,6 +26,7 @@
     "@elastic/elasticsearch": "^9.5.0",
     "@google-cloud/bigquery": "^9.0.2",
     "@types/pg": "^8.21.0",
+    "html2canvas": "1.4.1",
     "lucide-react": "^0.511.0",
     "mongodb": "^7.5.0",
     "mssql": "^12.7.0",
@@ -34,6 +38,8 @@
     "react-dom": "^19.2.0",
     "redis": "^6.2.1",
     "snowflake-sdk": "^3.2.0",
+    "ws": "^8.18.0",
+    "xlsx": "0.18.5",
     "yaml": "^2.9.0"
   },
   "devDependencies": {

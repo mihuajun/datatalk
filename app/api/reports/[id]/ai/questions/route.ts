@@ -61,7 +61,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ accepted: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "提交问题答案失败";
-    const status = message.includes("QUESTION_RESPONSE_REJECTED:not-pending") ? 409 : 503;
+    const questionExpired = message.includes("QUESTION_RESPONSE_REJECTED:not-pending")
+      || message.includes("QUESTION_RESPONSE_REJECTED") && message.includes("no active event stream");
+    const status = questionExpired ? 409 : 503;
     return NextResponse.json({
       message: status === 409 ? "当前问题已失效，请刷新对话后重试" : message,
     }, { status });

@@ -12,6 +12,8 @@ export const REPORT_AGENT_TOOL_SCOPES = [
   "metric:propose",
   "metric:feedback",
   "report:read",
+  "preview:inspect",
+  "image:generate",
   "web:search",
 ] as const;
 export type ReportAgentToolScope = (typeof REPORT_AGENT_TOOL_SCOPES)[number];

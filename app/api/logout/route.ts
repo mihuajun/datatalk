@@ -8,7 +8,14 @@ export async function POST() {
     redirectTo: "/",
   });
 
-  response.cookies.delete(AUTH_COOKIE_NAME);
+  response.cookies.set(AUTH_COOKIE_NAME, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+    ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}),
+  });
 
   return response;
 }

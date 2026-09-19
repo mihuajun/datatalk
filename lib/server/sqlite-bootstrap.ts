@@ -5,6 +5,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { SqliteDatabaseConfig } from "@/lib/server/database-config";
 import { createSalt, hashPassword } from "@/lib/server/password";
+import { RELEASE_CATEGORY_DEFAULTS } from "@/lib/server/release-category-defaults";
+import { RESOURCE_CATEGORY_DEFAULTS } from "@/lib/server/resource-category-defaults";
 
 const DEFAULT_TENANT_ID = 1;
 const DEFAULT_TENANT_CODE = "default";
@@ -36,6 +38,7 @@ CREATE TABLE IF NOT EXISTS tenant_user (
   tenant_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   username TEXT NOT NULL,
+  phone TEXT,
   email TEXT,
   role TEXT NOT NULL DEFAULT 'developer',
   password TEXT NOT NULL,
@@ -133,15 +136,90 @@ CREATE TABLE IF NOT EXISTS report_pending_audit (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS report_release_category (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS report_release (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL,
   report_code TEXT NOT NULL,
   version INTEGER NOT NULL,
   source_commit_hash TEXT,
+  thumbnail_url TEXT,
+  publisher_tenant_name TEXT,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  like_count INTEGER NOT NULL DEFAULT 0,
+  display_name TEXT,
+  remark TEXT,
+  description TEXT,
+  category_id INTEGER,
+  category_name TEXT,
   status TEXT NOT NULL DEFAULT 'published',
   error_message TEXT,
   created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resource_category (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_type TEXT NOT NULL DEFAULT 'report',
+  parent_id INTEGER,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resource_item (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL,
+  asset_type TEXT NOT NULL,
+  source_code TEXT NOT NULL,
+  source_version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  title TEXT NOT NULL,
+  summary TEXT,
+  thumbnail_url TEXT,
+  category_id INTEGER,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  favorite_count INTEGER NOT NULL DEFAULT 0,
+  like_count INTEGER NOT NULL DEFAULT 0,
+  content_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  submitted_by INTEGER,
+  submitted_at TEXT,
+  published_by INTEGER,
+  published_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resource_favorite (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  asset_type TEXT NOT NULL,
+  source_code TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS resource_like (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id INTEGER NOT NULL,
+  visitor_key TEXT NOT NULL,
+  asset_type TEXT NOT NULL,
+  source_code TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -243,8 +321,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_report_edit_audit_op ON report_edit_audit(o
 CREATE INDEX IF NOT EXISTS idx_report_edit_audit_lookup ON report_edit_audit(tenant_id, report_code, status, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_report_pending_audit_audit ON report_pending_audit(audit_id);
 CREATE INDEX IF NOT EXISTS idx_report_pending_audit_lookup ON report_pending_audit(tenant_id, report_code, status, audit_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_report_release_category_code ON report_release_category(tenant_id, code);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_report_release_category_name ON report_release_category(tenant_id, name);
+CREATE INDEX IF NOT EXISTS idx_report_release_category_sort ON report_release_category(tenant_id, sort_order, id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_report_release_version ON report_release(tenant_id, report_code, version);
 CREATE INDEX IF NOT EXISTS idx_report_release_recent ON report_release(tenant_id, report_code, created_at);
+CREATE INDEX IF NOT EXISTS idx_report_release_category ON report_release(tenant_id, category_id, category_name);
+CREATE INDEX IF NOT EXISTS idx_report_release_popularity ON report_release(tenant_id, view_count, like_count);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_resource_item_source ON resource_item(tenant_id, asset_type, source_code);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_resource_favorite_user_asset ON resource_favorite(tenant_id, user_id, asset_type, source_code);
+CREATE INDEX IF NOT EXISTS idx_resource_favorite_user ON resource_favorite(tenant_id, user_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_resource_like_visitor_asset ON resource_like(tenant_id, visitor_key, asset_type, source_code);
+CREATE INDEX IF NOT EXISTS idx_resource_like_asset ON resource_like(tenant_id, asset_type, source_code, created_at);
+CREATE INDEX IF NOT EXISTS idx_resource_item_status ON resource_item(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_resource_item_publish ON resource_item(published_at);
+CREATE INDEX IF NOT EXISTS idx_resource_item_category ON resource_item(category_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_data_source_name ON tenant_data_source(tenant_id, name);
 CREATE INDEX IF NOT EXISTS idx_tenant_data_source_tenant ON tenant_data_source(tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_metric_key ON tenant_metric_knowledge(tenant_id, metric_key);
@@ -272,6 +363,33 @@ function hasColumn(database: DatabaseSync, tableName: string, columnName: string
 function addColumnIfMissing(database: DatabaseSync, tableName: string, columnName: string, definition: string) {
   if (!hasColumn(database, tableName, columnName)) {
     database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    return true;
+  }
+  return false;
+}
+
+function migrateLegacyResourceInteractionCounts(database: DatabaseSync) {
+  const resources = database.prepare(
+    "SELECT tenant_id, asset_type, source_code, favorite_count FROM resource_item",
+  ).all() as Array<{ tenant_id?: number; asset_type?: string; source_code?: string; favorite_count?: number }>;
+
+  for (const resource of resources) {
+    if (resource.tenant_id == null || !resource.asset_type || !resource.source_code) continue;
+    const favoriteRow = queryOne<{ count?: number }>(
+      database,
+      "SELECT COUNT(*) AS count FROM resource_favorite WHERE tenant_id = ? AND asset_type = ? AND source_code = ?",
+      [resource.tenant_id, resource.asset_type, resource.source_code],
+    );
+    const favoriteCount = Number(favoriteRow?.count || 0);
+    const legacyCount = Number(resource.favorite_count || 0);
+    const likeCount = Math.max(legacyCount - favoriteCount, 0);
+    execute(
+      database,
+      `UPDATE resource_item
+          SET favorite_count = ?, like_count = ?
+        WHERE tenant_id = ? AND asset_type = ? AND source_code = ?`,
+      [favoriteCount, likeCount, resource.tenant_id, resource.asset_type, resource.source_code],
+    );
   }
 }
 
@@ -295,7 +413,7 @@ function seedTenant(database: DatabaseSync) {
   execute(
     database,
     `INSERT INTO tenant (id, code, name, status) VALUES (?, ?, ?, 1)
-     ON CONFLICT(id) DO UPDATE SET code=excluded.code, name=excluded.name, status=1`,
+     ON CONFLICT(id) DO NOTHING`,
     [DEFAULT_TENANT_ID, DEFAULT_TENANT_CODE, DEFAULT_TENANT_NAME],
   );
 }
@@ -337,8 +455,14 @@ function seedDefaultUsers(database: DatabaseSync) {
   execute(
     database,
     `UPDATE tenant_user
-        SET role = CASE role WHEN '管理员' THEN 'admin' WHEN '开发者' THEN 'developer' ELSE role END
-      WHERE role IN ('管理员', '开发者')`,
+        SET role = CASE
+          WHEN lower(trim(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin') OR role = '超级管理员' THEN 'administrator'
+          WHEN role IN ('管理员', '租户管理员') THEN 'admin'
+          WHEN role = '开发者' THEN 'developer'
+          ELSE role
+        END
+      WHERE lower(trim(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin')
+         OR role IN ('超级管理员', '管理员', '租户管理员', '开发者')`,
   );
 
   const guest = queryOne<{ id: number }>(
@@ -409,6 +533,132 @@ function seedReports(database: DatabaseSync) {
   }
 }
 
+function seedReleaseCategories(database: DatabaseSync) {
+  for (const category of RELEASE_CATEGORY_DEFAULTS) {
+    execute(
+      database,
+      `INSERT INTO report_release_category
+        (tenant_id, code, name, description, sort_order, created_by)
+       VALUES (?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(tenant_id, code) DO UPDATE SET
+         name = excluded.name,
+         description = excluded.description,
+         sort_order = excluded.sort_order,
+         updated_at = CURRENT_TIMESTAMP`,
+      [DEFAULT_TENANT_ID, category.code, category.name, category.description, category.sortOrder],
+    );
+  }
+}
+
+function seedResourceCategories(database: DatabaseSync) {
+  const assetTypes = [...new Set(RESOURCE_CATEGORY_DEFAULTS.map((category) => category.assetType))];
+  for (const assetType of assetTypes) execute(database, "UPDATE resource_category SET enabled = 0 WHERE asset_type = ?", [assetType]);
+  for (const category of RESOURCE_CATEGORY_DEFAULTS) {
+    const parentId = category.parentCode
+      ? Number(queryOne<{ id: number }>(
+        database,
+        "SELECT id FROM resource_category WHERE asset_type = ? AND code = ? LIMIT 1",
+        [category.assetType, category.parentCode],
+      )?.id || 0) || null
+      : null;
+
+    execute(
+      database,
+      `INSERT INTO resource_category
+        (asset_type, parent_id, code, name, sort_order, enabled)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON CONFLICT(asset_type, code) DO UPDATE SET
+         parent_id = excluded.parent_id,
+         name = excluded.name,
+         sort_order = excluded.sort_order,
+         enabled = excluded.enabled,
+         updated_at = CURRENT_TIMESTAMP`,
+      [category.assetType, parentId, category.code, category.name, category.sortOrder],
+    );
+  }
+}
+
+function migrateLegacyResourceCategoryReferences(database: DatabaseSync) {
+  const mappings: Record<string, string> = {
+    overview: "enterprise-operations",
+    "growth-marketing": "marketing-growth",
+    "product-supply": "supply-operations",
+    "customer-service": "users-customers",
+    "finance-organization": "finance-analysis",
+    "data-building": "industry-public",
+    "key-metrics": "enterprise-operations",
+    "trend-overview": "industry-research",
+    "channel-campaign": "marketing-campaign",
+    "user-growth": "users-customers",
+    "inventory-supply": "supply-operations",
+    "procurement-fulfillment": "fulfillment",
+    "customer-operations": "users-customers",
+    "service-after-sales": "customer-service",
+    "risk-alert": "enterprise-operations",
+    "organization-efficiency": "organization-effectiveness",
+    "subject-dataset": "industry-public",
+    "metric-model": "industry-public",
+    "dimension-dictionary": "industry-public",
+    other: "industry-public",
+    healthcare: "industry-research",
+  };
+
+  for (const [legacyCode, targetCode] of Object.entries(mappings)) {
+    const legacy = queryOne<{ id: number; enabled: number }>(
+      database,
+      "SELECT id, enabled FROM resource_category WHERE asset_type = 'report' AND code = ? LIMIT 1",
+      [legacyCode],
+    );
+    if (!legacy || Number(legacy.enabled) === 1) continue;
+    const target = queryOne<{ id: number }>(
+      database,
+      "SELECT id FROM resource_category WHERE asset_type = 'report' AND code = ? AND enabled = 1 LIMIT 1",
+      [targetCode],
+    );
+    if (!target || Number(target.id) === Number(legacy.id)) continue;
+    execute(database, "UPDATE resource_item SET category_id = ? WHERE asset_type = 'report' AND category_id = ?", [target.id, legacy.id]);
+  }
+}
+
+function removeSupersededReportTemplateResources(database: DatabaseSync) {
+  const rows = database.prepare(
+    `SELECT id, tenant_id, asset_type, source_code
+       FROM resource_item
+      WHERE asset_type IN ('report', 'template')
+      ORDER BY tenant_id ASC,
+               lower(source_code) ASC,
+               COALESCE(published_at, updated_at, created_at) DESC,
+               id DESC`,
+  ).all() as Array<{
+    id: number;
+    tenant_id: number;
+    asset_type: "report" | "template";
+    source_code: string;
+  }>;
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    const key = `${row.tenant_id}:${row.source_code.toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      continue;
+    }
+
+    const resourceKey = [row.tenant_id, row.asset_type, row.source_code];
+    execute(
+      database,
+      "DELETE FROM resource_favorite WHERE tenant_id = ? AND asset_type = ? AND source_code = ?",
+      resourceKey,
+    );
+    execute(
+      database,
+      "DELETE FROM resource_like WHERE tenant_id = ? AND asset_type = ? AND source_code = ?",
+      resourceKey,
+    );
+    execute(database, "DELETE FROM resource_item WHERE id = ?", [row.id]);
+  }
+}
+
 function seedDataSources(database: DatabaseSync, config: SqliteDatabaseConfig) {
   const rows = [
     {
@@ -446,11 +696,61 @@ export async function initializeSqliteDatabase(config: SqliteDatabaseConfig) {
     database.exec(SCHEMA);
     addColumnIfMissing(database, "tenant_report", "deleted_at", "TEXT");
     addColumnIfMissing(database, "tenant_report", "deleted_by", "INTEGER");
+    addColumnIfMissing(database, "tenant_user", "phone", "TEXT");
+    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_user_phone ON tenant_user(phone)");
+    addColumnIfMissing(database, "report_release", "thumbnail_url", "TEXT");
+    addColumnIfMissing(database, "report_release", "publisher_tenant_name", "TEXT");
+    addColumnIfMissing(database, "report_release", "view_count", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "report_release", "like_count", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "report_release", "display_name", "TEXT");
+    addColumnIfMissing(database, "report_release", "remark", "TEXT");
+    addColumnIfMissing(database, "report_release", "description", "TEXT");
+    addColumnIfMissing(database, "report_release", "category_id", "INTEGER");
+    addColumnIfMissing(database, "report_release", "category_name", "TEXT");
+    addColumnIfMissing(database, "report_release", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    addColumnIfMissing(database, "resource_category", "parent_id", "INTEGER");
+    addColumnIfMissing(database, "resource_category", "asset_type", "TEXT NOT NULL DEFAULT 'report'");
+    addColumnIfMissing(database, "resource_category", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "resource_category", "enabled", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(database, "resource_category", "created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    addColumnIfMissing(database, "resource_category", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    addColumnIfMissing(database, "resource_item", "tenant_id", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(database, "resource_item", "asset_type", "TEXT NOT NULL DEFAULT 'report'");
+    addColumnIfMissing(database, "resource_item", "source_code", "TEXT");
+    addColumnIfMissing(database, "resource_item", "source_version", "INTEGER NOT NULL DEFAULT 1");
+    addColumnIfMissing(database, "resource_item", "status", "TEXT NOT NULL DEFAULT 'draft'");
+    addColumnIfMissing(database, "resource_item", "title", "TEXT");
+    addColumnIfMissing(database, "resource_item", "summary", "TEXT");
+    addColumnIfMissing(database, "resource_item", "thumbnail_url", "TEXT");
+    addColumnIfMissing(database, "resource_item", "category_id", "INTEGER");
+    addColumnIfMissing(database, "resource_item", "view_count", "INTEGER NOT NULL DEFAULT 0");
+    const resourceLikeCountAdded = addColumnIfMissing(database, "resource_item", "like_count", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "resource_item", "favorite_count", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "resource_item", "content_updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    addColumnIfMissing(database, "resource_item", "submitted_by", "INTEGER");
+    addColumnIfMissing(database, "resource_item", "submitted_at", "TEXT");
+    addColumnIfMissing(database, "resource_item", "published_by", "INTEGER");
+    addColumnIfMissing(database, "resource_item", "published_at", "TEXT");
+    addColumnIfMissing(database, "resource_item", "created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    addColumnIfMissing(database, "resource_item", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    database.exec("DROP INDEX IF EXISTS uq_resource_category_code");
+    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_resource_category_type_code ON resource_category(asset_type, code)");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_resource_category_type_parent ON resource_category(asset_type, parent_id, enabled, sort_order, id)");
+    if (resourceLikeCountAdded) migrateLegacyResourceInteractionCounts(database);
     database.exec("BEGIN IMMEDIATE");
     try {
       seedTenant(database);
       seedDefaultUsers(database);
       seedReports(database);
+      seedReleaseCategories(database);
+      seedResourceCategories(database);
+      migrateLegacyResourceCategoryReferences(database);
+      removeSupersededReportTemplateResources(database);
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_resource_item_report_template_source
+        ON resource_item(tenant_id, lower(source_code))
+        WHERE asset_type IN ('report', 'template')
+      `);
       seedDataSources(database, config);
       database.exec("COMMIT");
     } catch (error) {

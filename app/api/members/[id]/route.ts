@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getAuthSession, isAdminSession } from "@/lib/server/auth-session";
-import { setMemberEnabled, updateMember, type MemberRole } from "@/lib/server/member-repository";
+import { canManageMembersSession, getAuthSession } from "@/lib/server/auth-session";
+import { getMember, setMemberEnabled, updateMember, type MemberRole } from "@/lib/server/member-repository";
 
 function text(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 function parseId(value: string) { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; }
@@ -10,11 +10,15 @@ function role(value: unknown): MemberRole | null { return value === "admin" || v
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getAuthSession();
   if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-  if (!isAdminSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
+  if (!canManageMembersSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
   const id = parseId((await params).id);
   if (!id) return NextResponse.json({ message: "用户编号不正确" }, { status: 400 });
 
   try {
+    const currentMember = await getMember(session.tenantId, id);
+    if (!currentMember) return NextResponse.json({ message: "用户不存在" }, { status: 404 });
+    if (currentMember.role === "administrator") return NextResponse.json({ message: "超级管理员账号只能手动在数据库维护" }, { status: 403 });
+
     const body = (await request.json()) as Record<string, unknown>;
     if (typeof body.enabled === "boolean") {
       return NextResponse.json({ member: await setMemberEnabled(session.tenantId, id, body.enabled) });

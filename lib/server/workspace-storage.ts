@@ -11,7 +11,7 @@ function resolveWorkspaceStorageRoot() {
     return defaultContainerRoot;
   }
 
-  return path.resolve(cwd, "..", "chat-bi-workspace");
+  return path.resolve(cwd, "..", "datatalk-workspace");
 }
 
 export const WORKSPACE_STORAGE_ROOT = resolveWorkspaceStorageRoot();

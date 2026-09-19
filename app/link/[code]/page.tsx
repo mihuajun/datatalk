@@ -165,9 +165,10 @@ export default async function PublicReportPage({ params, searchParams }: { param
       <main className="min-h-screen bg-[#F4F7FB]">
           <ReportWebFrame
           className="block min-h-screen w-full border-0 bg-[#F4F7FB]"
-          title={result.report.name}
+            title={result.report.name}
             reportCode={publicLinkCode}
             source="release"
+            runtimeTarget="public-link"
             srcDoc={composeWebReportSrcDoc(result.webFiles, { filters: filterResolution.values, urlFilters: filterResolution.urlValues, defaults: filterResolution.defaults })}
             refreshKey={`${publicLinkCode}-${JSON.stringify(filterResolution.values)}`}
         />

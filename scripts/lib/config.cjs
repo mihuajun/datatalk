@@ -66,7 +66,7 @@ function defaultSqlitePath() {
     ? path.resolve(configuredStorageRoot)
     : (process.env.NODE_ENV === "production" && (cwd === "/app" || cwd.startsWith("/app/")))
       ? "/app/workspace"
-      : path.resolve(cwd, "..", "chat-bi-workspace");
+      : path.resolve(cwd, "..", "datatalk-workspace");
   return path.join(storageRoot, "chat-bi.sqlite");
 }
 

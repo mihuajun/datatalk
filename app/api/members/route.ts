@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getAuthSession, isAdminSession } from "@/lib/server/auth-session";
+import { canAccessMembersSession, getAuthSession } from "@/lib/server/auth-session";
 import { createMember, listMembers, type MemberRole } from "@/lib/server/member-repository";
 
 function text(value: unknown) {
@@ -14,7 +14,7 @@ function role(value: unknown): MemberRole | null {
 export async function GET() {
   const session = await getAuthSession();
   if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-  if (!isAdminSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
+  if (!canAccessMembersSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
 
   try {
     return NextResponse.json({ members: await listMembers(session.tenantId) });
@@ -27,7 +27,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getAuthSession();
   if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-  if (!isAdminSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
+  if (!canAccessMembersSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
 
   try {
     const body = (await request.json()) as Record<string, unknown>;
@@ -37,7 +37,6 @@ export async function POST(request: Request) {
     const password = text(body.password);
     const memberRole = role(body.role);
     if (!name || !username || !password || !memberRole) return NextResponse.json({ message: "请完整填写用户信息" }, { status: 400 });
-
     const member = await createMember({ tenantId: session.tenantId, name, username, email, password, role: memberRole });
     return NextResponse.json({ member }, { status: 201 });
   } catch (error: unknown) {

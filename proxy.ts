@@ -8,7 +8,7 @@ const publicPaths = new Set(["/", "/icon.svg"]);
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (publicPaths.has(pathname) || pathname.startsWith("/link/") || pathname.startsWith("/vendor/")) {
+  if (publicPaths.has(pathname) || pathname.startsWith("/link/") || pathname.startsWith("/share/") || pathname.startsWith("/vendor/")) {
     return NextResponse.next();
   }
 

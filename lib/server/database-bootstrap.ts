@@ -2,6 +2,8 @@ import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
 
 import { getDatabaseConfig } from "@/lib/server/database-config";
 import { createSalt, hashPassword } from "@/lib/server/password";
+import { RELEASE_CATEGORY_DEFAULTS } from "@/lib/server/release-category-defaults";
+import { RESOURCE_CATEGORY_DEFAULTS } from "@/lib/server/resource-category-defaults";
 import { initializeSqliteDatabase } from "@/lib/server/sqlite-bootstrap";
 
 const DEFAULT_TENANT_ID = 1;
@@ -21,12 +23,66 @@ function bootstrapEnabled() {
 
 async function addColumnIfMissing(connection: Connection, tableName: string, column: string, definition: string) {
   const [rows] = await connection.query<RowDataPacket[]>(`SHOW COLUMNS FROM ${tableName} LIKE ?`, [column]);
-  if (rows.length === 0) await connection.query(`ALTER TABLE ${tableName} ADD COLUMN ${column} ${definition}`);
+  if (rows.length === 0) {
+    await connection.query(`ALTER TABLE ${tableName} ADD COLUMN ${column} ${definition}`);
+    return true;
+  }
+  return false;
 }
 
 async function addIndexIfMissing(connection: Connection, tableName: string, indexName: string, definition: string) {
   const [rows] = await connection.query<RowDataPacket[]>(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [indexName]);
   if (rows.length === 0) await connection.query(`ALTER TABLE ${tableName} ADD ${definition}`);
+}
+
+async function dropIndexIfExists(connection: Connection, tableName: string, indexName: string) {
+  const [rows] = await connection.query<RowDataPacket[]>(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [indexName]);
+  if (rows.length > 0) await connection.query(`ALTER TABLE ${tableName} DROP INDEX ${indexName}`);
+}
+
+async function removeSupersededReportTemplateResources(connection: Connection) {
+  const [rows] = await connection.query<Array<RowDataPacket & {
+    id: number;
+    tenant_id: number;
+    asset_type: "report" | "template";
+    source_code: string;
+  }>>(
+    `SELECT id, tenant_id, asset_type, source_code
+       FROM resource_item
+      WHERE asset_type IN ('report', 'template')
+      ORDER BY tenant_id ASC,
+               LOWER(source_code) ASC,
+               COALESCE(published_at, updated_at, created_at) DESC,
+               id DESC`,
+  );
+  const seen = new Set<string>();
+  const superseded = rows.filter((row) => {
+    const key = `${row.tenant_id}:${row.source_code.toLowerCase()}`;
+    if (seen.has(key)) return true;
+    seen.add(key);
+    return false;
+  });
+  if (!superseded.length) return;
+
+  await connection.beginTransaction();
+  try {
+    for (const row of superseded) {
+      const resourceKey = [row.tenant_id, row.asset_type, row.source_code];
+      await connection.execute(
+        "DELETE FROM resource_favorite WHERE tenant_id = ? AND asset_type = ? AND source_code = ?",
+        resourceKey,
+      );
+      await connection.execute(
+        "DELETE FROM resource_like WHERE tenant_id = ? AND asset_type = ? AND source_code = ?",
+        resourceKey,
+      );
+      await connection.execute("DELETE FROM resource_item WHERE id = ?", [row.id]);
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  }
 }
 
 async function ensureTenantTable(connection: Connection) {
@@ -77,7 +133,7 @@ async function ensureTenantTable(connection: Connection) {
   await connection.execute(
     `INSERT INTO tenant (id, code, name, status)
      VALUES (?, ?, ?, 1)
-     ON DUPLICATE KEY UPDATE code = VALUES(code), name = VALUES(name), status = 1`,
+     ON DUPLICATE KEY UPDATE id = id`,
     [DEFAULT_TENANT_ID, DEFAULT_TENANT_CODE, DEFAULT_TENANT_NAME],
   );
 }
@@ -89,6 +145,7 @@ async function ensureTenantUserTable(connection: Connection) {
       tenant_id bigint unsigned NOT NULL,
       name varchar(80) NOT NULL,
       username varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      phone varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL,
       email varchar(160) NULL,
       role varchar(20) NOT NULL DEFAULT 'developer',
       password varchar(255) NOT NULL,
@@ -99,15 +156,26 @@ async function ensureTenantUserTable(connection: Connection) {
       updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY idx_tenant_user_tenant (tenant_id),
-      UNIQUE KEY uq_tenant_user_username (username)
+      UNIQUE KEY uq_tenant_user_username (username),
+      UNIQUE KEY uq_tenant_user_phone (phone)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
   await addColumnIfMissing(connection, "tenant_user", "email", "varchar(160) NULL AFTER username");
+  await addColumnIfMissing(connection, "tenant_user", "phone", "varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER username");
   await addColumnIfMissing(connection, "tenant_user", "role", "varchar(20) NOT NULL DEFAULT 'developer' AFTER email");
   await addColumnIfMissing(connection, "tenant_user", "last_active", "timestamp NULL AFTER status");
+  await addIndexIfMissing(connection, "tenant_user", "uq_tenant_user_phone", "UNIQUE KEY uq_tenant_user_phone (phone)");
   await connection.execute(
-    "UPDATE tenant_user SET role = CASE WHEN role = '管理员' THEN 'admin' WHEN role = '开发者' THEN 'developer' ELSE role END WHERE role IN ('管理员', '开发者')",
+    `UPDATE tenant_user
+        SET role = CASE
+          WHEN LOWER(TRIM(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin') OR role = '超级管理员' THEN 'administrator'
+          WHEN role IN ('管理员', '租户管理员') THEN 'admin'
+          WHEN role = '开发者' THEN 'developer'
+          ELSE role
+        END
+      WHERE LOWER(TRIM(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin')
+         OR role IN ('超级管理员', '管理员', '租户管理员', '开发者')`,
   );
 }
 
@@ -225,19 +293,48 @@ async function ensureReportTables(connection: Connection) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
   await connection.query(`
+    CREATE TABLE IF NOT EXISTS report_release_category (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      tenant_id bigint unsigned NOT NULL,
+      code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      name varchar(100) NOT NULL,
+      description varchar(255) NULL,
+      sort_order int NOT NULL DEFAULT 0,
+      created_by bigint unsigned NULL,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_report_release_category_code (tenant_id, code),
+      UNIQUE KEY uq_report_release_category_name (tenant_id, name),
+      KEY idx_report_release_category_sort (tenant_id, sort_order, id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await connection.query(`
     CREATE TABLE IF NOT EXISTS report_release (
       id bigint unsigned NOT NULL AUTO_INCREMENT,
       tenant_id bigint unsigned NOT NULL,
       report_code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
       version int unsigned NOT NULL,
       source_commit_hash varchar(64) NULL,
+      thumbnail_url varchar(500) NULL,
+      publisher_tenant_name varchar(120) NULL,
+      view_count int unsigned NOT NULL DEFAULT 0,
+      like_count int unsigned NOT NULL DEFAULT 0,
+      display_name varchar(160) NULL,
+      remark varchar(500) NULL,
+      description varchar(500) NULL,
+      category_id bigint unsigned NULL,
+      category_name varchar(100) NULL,
       status varchar(20) NOT NULL DEFAULT 'published',
       error_message varchar(500) NULL,
       created_by bigint unsigned NULL,
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       UNIQUE KEY uq_report_release_version (tenant_id, report_code, version),
-      KEY idx_report_release_recent (tenant_id, report_code, created_at)
+      KEY idx_report_release_recent (tenant_id, report_code, created_at),
+      KEY idx_report_release_category (tenant_id, category_id, category_name),
+      KEY idx_report_release_popularity (tenant_id, view_count, like_count)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
@@ -251,6 +348,155 @@ async function ensureReportTables(connection: Connection) {
   await addColumnIfMissing(connection, "report_public_link", "password_enabled", "tinyint NOT NULL DEFAULT 0");
   await addColumnIfMissing(connection, "report_public_link", "password", "varchar(4) CHARACTER SET ascii COLLATE ascii_bin NULL");
   await addColumnIfMissing(connection, "report_public_link", "expires_at", "datetime NULL");
+  await addColumnIfMissing(connection, "report_release", "thumbnail_url", "varchar(500) NULL AFTER source_commit_hash");
+  await addColumnIfMissing(connection, "report_release", "publisher_tenant_name", "varchar(120) NULL AFTER thumbnail_url");
+  await addColumnIfMissing(connection, "report_release", "view_count", "int unsigned NOT NULL DEFAULT 0 AFTER publisher_tenant_name");
+  await addColumnIfMissing(connection, "report_release", "like_count", "int unsigned NOT NULL DEFAULT 0 AFTER view_count");
+  await addColumnIfMissing(connection, "report_release", "display_name", "varchar(160) NULL AFTER like_count");
+  await addColumnIfMissing(connection, "report_release", "remark", "varchar(500) NULL AFTER display_name");
+  await addColumnIfMissing(connection, "report_release", "description", "varchar(500) NULL AFTER remark");
+  await addColumnIfMissing(connection, "report_release", "category_id", "bigint unsigned NULL AFTER description");
+  await addColumnIfMissing(connection, "report_release", "category_name", "varchar(100) NULL AFTER category_id");
+  await addColumnIfMissing(connection, "report_release", "updated_at", "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+  await addIndexIfMissing(connection, "report_release", "idx_report_release_category", "KEY idx_report_release_category (tenant_id, category_id, category_name)");
+  await addIndexIfMissing(connection, "report_release", "idx_report_release_popularity", "KEY idx_report_release_popularity (tenant_id, view_count, like_count)");
+}
+
+async function ensureResourceTables(connection: Connection) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS resource_category (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      asset_type varchar(30) NOT NULL DEFAULT 'report',
+      parent_id bigint unsigned NULL,
+      code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      name varchar(100) NOT NULL,
+      sort_order int NOT NULL DEFAULT 0,
+      enabled tinyint NOT NULL DEFAULT 1,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_resource_category_type_code (asset_type, code),
+      KEY idx_resource_category_type_parent (asset_type, parent_id, enabled, sort_order, id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS resource_item (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      tenant_id bigint unsigned NOT NULL,
+      asset_type varchar(30) NOT NULL,
+      source_code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      source_version int unsigned NOT NULL,
+      status varchar(20) NOT NULL DEFAULT 'draft',
+      title varchar(160) NOT NULL,
+      summary varchar(500) NULL,
+      thumbnail_url varchar(500) NULL,
+      category_id bigint unsigned NULL,
+      view_count int unsigned NOT NULL DEFAULT 0,
+      favorite_count int unsigned NOT NULL DEFAULT 0,
+      like_count int unsigned NOT NULL DEFAULT 0,
+      content_updated_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_by bigint unsigned NULL,
+      submitted_at timestamp NULL,
+      published_by bigint unsigned NULL,
+      published_at timestamp NULL,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_resource_item_source (tenant_id, asset_type, source_code),
+      KEY idx_resource_item_status (status, updated_at),
+      KEY idx_resource_item_publish (published_at),
+      KEY idx_resource_item_category (category_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await addColumnIfMissing(connection, "resource_category", "asset_type", "varchar(30) NOT NULL DEFAULT 'report' AFTER id");
+  await addColumnIfMissing(connection, "resource_category", "parent_id", "bigint unsigned NULL AFTER id");
+  await addColumnIfMissing(connection, "resource_category", "sort_order", "int NOT NULL DEFAULT 0 AFTER name");
+  await addColumnIfMissing(connection, "resource_category", "enabled", "tinyint NOT NULL DEFAULT 1 AFTER sort_order");
+  await addColumnIfMissing(connection, "resource_category", "created_at", "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP");
+  await addColumnIfMissing(connection, "resource_category", "updated_at", "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+  await dropIndexIfExists(connection, "resource_category", "uq_resource_category_code");
+  await addIndexIfMissing(connection, "resource_category", "uq_resource_category_type_code", "UNIQUE KEY uq_resource_category_type_code (asset_type, code)");
+  await addIndexIfMissing(connection, "resource_category", "idx_resource_category_parent", "KEY idx_resource_category_parent (parent_id, enabled, sort_order, id)");
+  await addIndexIfMissing(connection, "resource_category", "idx_resource_category_type_parent", "KEY idx_resource_category_type_parent (asset_type, parent_id, enabled, sort_order, id)");
+
+  await addColumnIfMissing(connection, "resource_item", "tenant_id", "bigint unsigned NOT NULL AFTER id");
+  await addColumnIfMissing(connection, "resource_item", "asset_type", "varchar(30) NOT NULL AFTER tenant_id");
+  await addColumnIfMissing(connection, "resource_item", "source_code", "varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL AFTER asset_type");
+  await addColumnIfMissing(connection, "resource_item", "source_version", "int unsigned NOT NULL AFTER source_code");
+  await addColumnIfMissing(connection, "resource_item", "status", "varchar(20) NOT NULL DEFAULT 'draft' AFTER source_version");
+  await addColumnIfMissing(connection, "resource_item", "title", "varchar(160) NOT NULL AFTER status");
+  await addColumnIfMissing(connection, "resource_item", "summary", "varchar(500) NULL AFTER title");
+  await addColumnIfMissing(connection, "resource_item", "thumbnail_url", "varchar(500) NULL AFTER summary");
+  await addColumnIfMissing(connection, "resource_item", "category_id", "bigint unsigned NULL AFTER thumbnail_url");
+  await addColumnIfMissing(connection, "resource_item", "view_count", "int unsigned NOT NULL DEFAULT 0 AFTER category_id");
+  await addColumnIfMissing(connection, "resource_item", "favorite_count", "int unsigned NOT NULL DEFAULT 0 AFTER view_count");
+  const resourceLikeCountAdded = await addColumnIfMissing(connection, "resource_item", "like_count", "int unsigned NOT NULL DEFAULT 0 AFTER favorite_count");
+  await addColumnIfMissing(connection, "resource_item", "content_updated_at", "timestamp NULL DEFAULT CURRENT_TIMESTAMP AFTER favorite_count");
+  await addColumnIfMissing(connection, "resource_item", "submitted_by", "bigint unsigned NULL AFTER content_updated_at");
+  await addColumnIfMissing(connection, "resource_item", "submitted_at", "timestamp NULL AFTER submitted_by");
+  await addColumnIfMissing(connection, "resource_item", "published_by", "bigint unsigned NULL AFTER submitted_at");
+  await addColumnIfMissing(connection, "resource_item", "published_at", "timestamp NULL AFTER published_by");
+  await addColumnIfMissing(connection, "resource_item", "created_at", "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP");
+  await addColumnIfMissing(connection, "resource_item", "updated_at", "timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+  await addIndexIfMissing(connection, "resource_item", "uq_resource_item_source", "UNIQUE KEY uq_resource_item_source (tenant_id, asset_type, source_code)");
+  await addIndexIfMissing(connection, "resource_item", "idx_resource_item_status", "KEY idx_resource_item_status (status, updated_at)");
+  await addIndexIfMissing(connection, "resource_item", "idx_resource_item_publish", "KEY idx_resource_item_publish (published_at)");
+  await addIndexIfMissing(connection, "resource_item", "idx_resource_item_category", "KEY idx_resource_item_category (category_id)");
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS resource_favorite (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      tenant_id bigint unsigned NOT NULL,
+      user_id bigint unsigned NOT NULL,
+      asset_type varchar(30) NOT NULL,
+      source_code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_resource_favorite_user_asset (tenant_id, user_id, asset_type, source_code),
+      KEY idx_resource_favorite_user (tenant_id, user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS resource_like (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      tenant_id bigint unsigned NOT NULL,
+      visitor_key varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      asset_type varchar(30) NOT NULL,
+      source_code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_resource_like_visitor_asset (tenant_id, visitor_key, asset_type, source_code),
+      KEY idx_resource_like_asset (tenant_id, asset_type, source_code, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  if (resourceLikeCountAdded) {
+    await connection.query(`
+      UPDATE resource_item ri
+      LEFT JOIN (
+        SELECT tenant_id, asset_type, source_code, COUNT(*) AS favorite_count
+          FROM resource_favorite
+         GROUP BY tenant_id, asset_type, source_code
+      ) favorites
+        ON favorites.tenant_id = ri.tenant_id
+       AND favorites.asset_type = ri.asset_type
+       AND favorites.source_code = ri.source_code
+         SET ri.like_count = GREATEST(COALESCE(ri.favorite_count, 0) - COALESCE(favorites.favorite_count, 0), 0),
+             ri.favorite_count = COALESCE(favorites.favorite_count, 0)
+    `);
+  }
+  await addColumnIfMissing(
+    connection,
+    "resource_item",
+    "report_template_source_code",
+    "varchar(50) CHARACTER SET ascii COLLATE ascii_bin GENERATED ALWAYS AS (CASE WHEN asset_type IN ('report', 'template') THEN LOWER(source_code) ELSE NULL END) STORED AFTER source_code",
+  );
+  await removeSupersededReportTemplateResources(connection);
+  await addIndexIfMissing(
+    connection,
+    "resource_item",
+    "uq_resource_item_report_template_source",
+    "UNIQUE KEY uq_resource_item_report_template_source (tenant_id, report_template_source_code)",
+  );
 }
 
 async function ensureDataSourceTables(connection: Connection) {
@@ -422,6 +668,102 @@ async function ensureDefaultUsers(connection: Connection) {
   });
 }
 
+async function ensureDefaultReleaseCategories(connection: Connection) {
+  const [tenantRows] = await connection.query<Array<RowDataPacket & { id: number }>>(
+    "SELECT id FROM tenant ORDER BY id ASC",
+  );
+  const tenantIds = tenantRows.length > 0 ? tenantRows.map((row) => Number(row.id)) : [DEFAULT_TENANT_ID];
+
+  for (const tenantId of tenantIds) {
+    for (const category of RELEASE_CATEGORY_DEFAULTS) {
+      await connection.execute(
+        `INSERT INTO report_release_category
+          (tenant_id, code, name, description, sort_order, created_by)
+         VALUES (?, ?, ?, ?, ?, NULL)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name),
+           description = VALUES(description),
+           sort_order = VALUES(sort_order)`,
+        [tenantId, category.code, category.name, category.description, category.sortOrder],
+      );
+    }
+  }
+}
+
+async function ensureDefaultResourceCategories(connection: Connection) {
+  const assetTypes = [...new Set(RESOURCE_CATEGORY_DEFAULTS.map((category) => category.assetType))];
+  for (const assetType of assetTypes) {
+    await connection.execute("UPDATE resource_category SET enabled = 0 WHERE asset_type = ?", [assetType]);
+  }
+  for (const category of RESOURCE_CATEGORY_DEFAULTS) {
+    let parentId: number | null = null;
+    if (category.parentCode) {
+      const [parentRows] = await connection.query<Array<RowDataPacket & { id: number }>>(
+        "SELECT id FROM resource_category WHERE asset_type = ? AND code = ? LIMIT 1",
+        [category.assetType, category.parentCode],
+      );
+      parentId = parentRows[0] ? Number(parentRows[0].id) : null;
+    }
+
+    await connection.execute(
+      `INSERT INTO resource_category
+        (asset_type, parent_id, code, name, sort_order, enabled)
+       VALUES (?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         parent_id = VALUES(parent_id),
+         name = VALUES(name),
+         sort_order = VALUES(sort_order),
+         enabled = VALUES(enabled)`,
+      [category.assetType, parentId, category.code, category.name, category.sortOrder],
+    );
+  }
+}
+
+async function migrateLegacyResourceCategoryReferences(connection: Connection) {
+  const mappings: Record<string, string> = {
+    overview: "enterprise-operations",
+    "growth-marketing": "marketing-growth",
+    "product-supply": "supply-operations",
+    "customer-service": "users-customers",
+    "finance-organization": "finance-analysis",
+    "data-building": "industry-public",
+    "key-metrics": "enterprise-operations",
+    "trend-overview": "industry-research",
+    "channel-campaign": "marketing-campaign",
+    "user-growth": "users-customers",
+    "inventory-supply": "supply-operations",
+    "procurement-fulfillment": "fulfillment",
+    "customer-operations": "users-customers",
+    "service-after-sales": "customer-service",
+    "risk-alert": "enterprise-operations",
+    "organization-efficiency": "organization-effectiveness",
+    "subject-dataset": "industry-public",
+    "metric-model": "industry-public",
+    "dimension-dictionary": "industry-public",
+    other: "industry-public",
+    healthcare: "industry-research",
+  };
+
+  for (const [legacyCode, targetCode] of Object.entries(mappings)) {
+    const [legacyRows] = await connection.query<Array<RowDataPacket & { id: number; enabled: number }>>(
+      "SELECT id, enabled FROM resource_category WHERE asset_type = 'report' AND code = ? LIMIT 1",
+      [legacyCode],
+    );
+    const legacy = legacyRows[0];
+    if (!legacy || Number(legacy.enabled) === 1) continue;
+    const [targetRows] = await connection.query<Array<RowDataPacket & { id: number }>>(
+      "SELECT id FROM resource_category WHERE asset_type = 'report' AND code = ? AND enabled = 1 LIMIT 1",
+      [targetCode],
+    );
+    const target = targetRows[0];
+    if (!target || Number(target.id) === Number(legacy.id)) continue;
+    await connection.execute(
+      "UPDATE resource_item SET category_id = ? WHERE asset_type = 'report' AND category_id = ?",
+      [target.id, legacy.id],
+    );
+  }
+}
+
 async function runBootstrap() {
   const config = getDatabaseConfig();
   if (config.kind === "sqlite") {
@@ -443,9 +785,13 @@ async function runBootstrap() {
     await ensureTenantTable(connection);
     await ensureTenantUserTable(connection);
     await ensureReportTables(connection);
+    await ensureResourceTables(connection);
     await ensureDataSourceTables(connection);
     await ensureMetricKnowledgeTables(connection);
     await ensureDefaultUsers(connection);
+    await ensureDefaultReleaseCategories(connection);
+    await ensureDefaultResourceCategories(connection);
+    await migrateLegacyResourceCategoryReferences(connection);
   } finally {
     await connection.end();
   }

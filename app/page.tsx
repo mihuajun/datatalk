@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
-import { ArrowUpRight, MessageCircle, Sparkles } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
+import { ExternalReturn } from "@/components/auth/external-return";
 import { getAuthSession } from "@/lib/server/auth-session";
+import { safeReturnTo } from "@/lib/server/safe-return-to";
 
 function DataTalkLogo() {
   return (
@@ -26,11 +28,6 @@ function ReportPreview() {
 
   return (
     <div className="report-preview relative w-full max-w-[690px]">
-      <div className="absolute -left-6 top-[154px] hidden items-center gap-2 rounded-full border border-[#CFE0F4] bg-white px-3 py-2 shadow-[0_8px_18px_rgba(33,103,232,0.12)] xl:flex">
-        <Sparkles className="h-4 w-4 text-[#2167E8]" />
-        <span className="text-xs font-bold text-[#2167E8]">生成中</span>
-      </div>
-
       <div className="mb-8 ml-8">
         <h2 className="text-[28px] font-bold leading-tight tracking-[-0.03em] text-[#17243A]">一句话，生成一份报表</h2>
         <p className="mt-3 text-sm text-[#71819B]">描述需求，AI 直接生成可预览、可继续修改的报表</p>
@@ -91,45 +88,32 @@ function ReportPreview() {
         </div>
       </div>
 
-      <div className="ml-8 mt-6 flex items-center gap-2 text-[13px] font-semibold text-[#60728D]">
-        <span>一句话生成</span>
-        <span className="text-[#B4C1D2]">·</span>
-        <span>对话修改</span>
-        <span className="text-[#B4C1D2]">·</span>
-        <span>保存复用</span>
-      </div>
-
-      <div className="pointer-events-none absolute -right-10 -top-5 hidden h-16 w-16 rounded-full border border-[#B9D7FF] bg-white/80 p-2 shadow-[0_10px_22px_rgba(33,103,232,0.10)] lg:block">
-        <div className="flex h-full items-center justify-center rounded-full bg-[#F0F6FF]">
-          <ArrowUpRight className="h-5 w-5 text-[#2167E8]" />
-        </div>
-      </div>
     </div>
   );
 }
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams?: Promise<{ next?: string }> }) {
   const session = await getAuthSession();
+  const { next } = (await searchParams) || {};
 
   if (session) {
-    redirect("/reports");
+    const target = safeReturnTo(next);
+    if (target.startsWith("/")) redirect(target);
+    return <ExternalReturn href={target} />;
   }
 
   return (
-    <main className="login-canvas relative min-h-screen overflow-hidden">
+    <main className="login-canvas relative min-h-screen overflow-x-hidden">
       <div className="pointer-events-none absolute inset-0" aria-hidden="true">
         <div className="absolute -left-20 top-8 h-[3px] w-[940px] rotate-[-28deg] rounded-full bg-white/55" />
         <div className="absolute left-[50%] top-[68px] h-[3px] w-[410px] rotate-[-25deg] rounded-full bg-white/70" />
         <div className="absolute left-[71%] top-[120px] h-[3px] w-[620px] rotate-[24deg] rounded-full bg-white/45" />
-        <div className="absolute left-20 top-[650px] h-[3px] w-[630px] rotate-[34deg] rounded-full bg-white/40" />
-        <div className="absolute right-[-100px] top-[620px] h-[3px] w-[460px] rotate-[-18deg] rounded-full bg-white/50" />
-        <div className="absolute right-0 top-0 h-[220px] w-[585px] bg-white/25 [clip-path:polygon(0_39%,46%_0,100%_0,78%_51%,45%_100%)]" />
-        <div className="absolute right-[-10px] top-[130px] h-[245px] w-[655px] bg-gradient-to-b from-[#68F3FF]/10 via-[#26B6FF]/10 to-[#3979FF]/10 [clip-path:polygon(0_26%,38%_4%,62%_27%,100%_33%,100%_88%,58%_75%,35%_58%,0_73%)]" />
+        <div className="absolute -bottom-12 right-[-120px] h-[3px] w-[620px] rotate-[-18deg] rounded-full bg-white/45" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen max-w-[1216px] items-center px-5 py-10 sm:px-8 lg:px-0">
         <div className="grid w-full items-center gap-12 lg:grid-cols-[438px_minmax(0,1fr)] lg:gap-[75px]">
-          <section className="min-h-[610px] w-full max-w-[438px] justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-9 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:px-[50px] sm:py-11 lg:justify-self-start">
+          <section className="min-h-0 w-full max-w-[438px] justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-9 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:px-[50px] sm:py-11 lg:min-h-[540px] lg:justify-self-start">
             <div className="flex items-center gap-4">
               <DataTalkLogo />
               <div className="min-w-0">
@@ -138,13 +122,11 @@ export default async function HomePage() {
               </div>
             </div>
 
-            <div className="mt-11 flex items-center gap-3">
-              <h1 className="text-[30px] font-bold leading-none tracking-[-0.04em] text-[#17243A]">欢迎登录</h1>
-              <div className="h-[18px] w-px bg-[#D9E2EF]" />
-              <span className="text-xs text-[#7B8AA3]">DataTalk</span>
+            <div className="mt-10 flex items-center">
+              <h1 className="text-[30px] font-bold leading-none tracking-[-0.04em] text-[#17243A]">登录工作台</h1>
             </div>
 
-            <LoginForm />
+            <LoginForm returnTo={next} />
           </section>
 
           <section className="hidden min-w-0 lg:block" aria-label="DataTalk 产品预览">

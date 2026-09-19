@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2/promise";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { normalizeUserRole, type UserRole } from "@/lib/server/auth-session";
+import { encodeAuthSession, normalizeUserRole } from "@/lib/server/auth-session";
 import { getDbPool } from "@/lib/server/mysql";
 import { hashPassword } from "@/lib/server/password";
+import { safeReturnTo } from "@/lib/server/safe-return-to";
 
 type TenantUserRow = RowDataPacket & {
   id?: number;
@@ -46,12 +47,8 @@ function verifyPassword(user: TenantUserRow, password: string) {
   return hashPassword(password, salt) === storedPassword;
 }
 
-function encodeSession(session: { userId: number; tenantId: number; username: string; name: string; role: UserRole }) {
-  return Buffer.from(JSON.stringify(session)).toString("base64url");
-}
-
 export async function POST(request: Request) {
-  let body: { username?: string; password?: string } | null = null;
+  let body: { username?: string; password?: string; returnTo?: string } | null = null;
 
   try {
     body = (await request.json()) as { username?: string; password?: string };
@@ -97,10 +94,10 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({
       success: true,
-      redirectTo: "/reports",
+      redirectTo: safeReturnTo(body?.returnTo),
     });
 
-    response.cookies.set(AUTH_COOKIE_NAME, encodeSession({
+    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession({
       userId: Number(user.id || user.user_id || 0),
       tenantId: Number(user.tenant_id),
       username: user.username,
@@ -112,6 +109,7 @@ export async function POST(request: Request) {
       secure: process.env.NODE_ENV === "production",
       path: "/",
       maxAge: 60 * 60 * 24,
+      ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}),
     });
 
     return response;

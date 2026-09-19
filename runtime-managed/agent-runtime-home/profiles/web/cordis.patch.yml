@@ -4,6 +4,8 @@
 - insert:
     - id: report-tools
       name: '../../plugins/report-tools.mjs'
+    - id: datatalk-image-gen
+      name: '../../plugins/datatalk-image-gen.mjs'
     - id: web-search-proxy
       name: '../../plugins/web-search-proxy.mjs'
 

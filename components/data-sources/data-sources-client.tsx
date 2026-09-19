@@ -219,9 +219,7 @@ export function DataSourcesClient({ initialDataSources }: { initialDataSources: 
                   <td className="px-4">
                     <div className="flex items-center gap-3 whitespace-nowrap">
                       <button type="button" onClick={() => openEdit(source)} className="text-[#2167E8] hover:underline">编辑</button>
-                      <span aria-hidden="true" className="text-[#C5CDD8]">|</span>
                       <button type="button" onClick={() => duplicate(source)} className="text-[#526174] hover:text-[#2167E8] hover:underline">复制</button>
-                      <span aria-hidden="true" className="text-[#C5CDD8]">|</span>
                       <button type="button" onClick={() => remove(source)} className="text-[#C73A55] hover:underline">删除</button>
                     </div>
                   </td>

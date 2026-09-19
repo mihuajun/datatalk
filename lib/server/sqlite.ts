@@ -102,7 +102,8 @@ function rewriteMySqlSyntax(sql: string) {
     .replace(/\bCONVERT\((\?|[^,()]+)\s+USING\s+utf8mb4\)/gi, "$1")
     .replace(/\bJSON_CONTAINS\(([^,]+),\s*JSON_QUOTE\(\?\)\)/gi, "EXISTS (SELECT 1 FROM json_each($1) WHERE json_each.value = ?)")
     .replace(/\bORDER\s+BY\s+FIELD\(([^,]+),\s*\?\)/gi, "ORDER BY CASE $1 WHEN ? THEN 0 ELSE 1 END")
-    .replace(/\bLEAST\(/gi, "min(");
+    .replace(/\bLEAST\(/gi, "min(")
+    .replace(/\bINSERT\s+IGNORE\s+INTO\b/gi, "INSERT OR IGNORE INTO");
 }
 
 function rewriteDuplicateKeyUpsert(sql: string) {

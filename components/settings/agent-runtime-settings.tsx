@@ -6,6 +6,7 @@ import {
   BrainCircuit,
   CheckCircle2,
   Download,
+  ExternalLink,
   Play,
   Power,
   RefreshCw,
@@ -21,6 +22,7 @@ type AgentRuntimeAction = "install" | "start" | "restart" | "stop";
 type AgentModelConfig = {
   baseUrl: string;
   model: string;
+  imageModel: string;
   apiKeyConfigured: boolean;
   apiKeyPreview: string;
 };
@@ -82,10 +84,11 @@ const navItems = [
   { key: "more", label: "更多配置项", icon: Settings2, active: false },
 ];
 
-export function AgentRuntimeSettings() {
+export function AgentRuntimeSettings({ initialRuntimeWebUrl }: { initialRuntimeWebUrl: string | null }) {
   const [runtime, setRuntime] = useState<AgentRuntimeStatus | null>(null);
+  const runtimeWebUrl = initialRuntimeWebUrl;
   const [model, setModel] = useState<AgentModelConfig | null>(null);
-  const [modelForm, setModelForm] = useState({ baseUrl: "", apiKey: "", model: "" });
+  const [modelForm, setModelForm] = useState({ baseUrl: "", apiKey: "", model: "", imageModel: "" });
   const [modelLoading, setModelLoading] = useState(true);
   const [modelSaving, setModelSaving] = useState(false);
   const [modelExpanded, setModelExpanded] = useState(false);
@@ -103,7 +106,7 @@ export function AgentRuntimeSettings() {
       if (!response.ok) throw new Error(result.message || "读取模型配置失败");
       const nextModel = result.model || null;
       setModel(nextModel);
-      if (nextModel) setModelForm({ baseUrl: nextModel.baseUrl, apiKey: "", model: nextModel.model });
+      if (nextModel) setModelForm({ baseUrl: nextModel.baseUrl, apiKey: "", model: nextModel.model, imageModel: nextModel.imageModel || "" });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "读取模型配置失败");
     } finally {
@@ -159,6 +162,9 @@ export function AgentRuntimeSettings() {
       if (!response.ok || !result.runtime) throw new Error(result.message || "操作失败");
       setRuntime(result.runtime);
       setMessage(result.message || "操作完成");
+      if (action === "start" || action === "restart") {
+        window.location.reload();
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "操作失败");
     } finally {
@@ -241,7 +247,7 @@ export function AgentRuntimeSettings() {
                     <h2 className="text-[17px] font-bold text-[#17243A]">受管运行时</h2>
                     {runtime ? <StatusBadge tone={statusTone(runtime.state)}>{statusLabel(runtime.state)}</StatusBadge> : null}
                   </div>
-                  <p className="mt-1.5 text-[13px] leading-6 text-[#71819B]">使用 <code className="rounded bg-[#f1f4f8] px-1.5 py-0.5 text-[12px] text-[#526174]">@deepseek-ai/dsh@latest</code>，由当前系统统一管理。</p>
+                  <p className="mt-1.5 text-[13px] leading-6 text-[#71819B]">使用 <code className="rounded bg-[#f1f4f8] px-1.5 py-0.5 text-[12px] text-[#526174]">@deepseek-ai/dsh@{runtime?.requestedVersion || "固定版本"}</code>，由当前系统统一管理。</p>
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -254,6 +260,7 @@ export function AgentRuntimeSettings() {
                 ) : null}
                 {runtime?.running ? (
                   <>
+                    {runtimeWebUrl ? <a href={runtimeWebUrl} target="_blank" rel="noopener noreferrer" className="settings-secondary-button"><ExternalLink className="h-4 w-4" />打开 Runtime Web</a> : null}
                     <button type="button" onClick={() => void handleAction("restart")} disabled={Boolean(busyAction)} className="settings-primary-button"><RefreshCw className={`h-4 w-4 ${busyAction === "restart" ? "animate-spin" : ""}`} />重启</button>
                     <button type="button" onClick={() => void handleAction("stop")} disabled={Boolean(busyAction)} className="settings-secondary-button"><Power className="h-4 w-4" />关闭</button>
                   </>
@@ -296,9 +303,10 @@ export function AgentRuntimeSettings() {
               {modelExpanded ? (
                 <div className="settings-model-form">
                   <label className="settings-model-field settings-model-field-wide"><span>Base URL</span><input value={modelForm.baseUrl} onChange={(event) => updateModelField("baseUrl", event.target.value)} placeholder="https://api.example.com/v1" /></label>
-                  <label className="settings-model-field"><span>模型名称</span><input value={modelForm.model} onChange={(event) => updateModelField("model", event.target.value)} placeholder="deepseek-chat" /></label>
+                  <label className="settings-model-field"><span>对话模型</span><input value={modelForm.model} onChange={(event) => updateModelField("model", event.target.value)} placeholder="deepseek-chat" /></label>
+                  <label className="settings-model-field"><span>图片模型 <em>可选</em></span><input value={modelForm.imageModel} onChange={(event) => updateModelField("imageModel", event.target.value)} placeholder="gpt-image-2.5" /></label>
                   <label className="settings-model-field"><span>API Key {model?.apiKeyPreview ? <em>当前 {model.apiKeyPreview}</em> : null}</span><input type="password" value={modelForm.apiKey} onChange={(event) => updateModelField("apiKey", event.target.value)} placeholder={model?.apiKeyConfigured ? "留空则保留当前 Key" : "请输入 API Key"} /></label>
-                  <div className="settings-model-actions"><button type="button" onClick={() => void saveModelConfig()} disabled={modelLoading || modelSaving} className="settings-primary-button">{modelSaving ? "校验并保存…" : "校验并保存"}</button><span>保存前会请求模型接口进行校验</span></div>
+                  <div className="settings-model-actions"><button type="button" onClick={() => void saveModelConfig()} disabled={modelLoading || modelSaving} className="settings-primary-button">{modelSaving ? "校验并保存…" : "校验并保存"}</button><span>保存前会校验对话模型；图片模型会在首次生成时校验</span></div>
                 </div>
               ) : null}
             </section>

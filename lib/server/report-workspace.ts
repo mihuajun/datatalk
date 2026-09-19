@@ -9,6 +9,7 @@ import { ensureWorkspaceStorageLayout, REPORT_WORKSPACE_ROOT } from "@/lib/serve
 const REPORT_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/;
 const TENANT_ID_PATTERN = /^[1-9][0-9]*$/;
 const ROOT_FILES = ["report.json", "description.md", "page.html", "styles.css", "app.js", "server.js", "theme.json", "interactions.json"] as const;
+const REPORT_DATA_FILE_PATTERN = /^data\/(?:[A-Za-z0-9][A-Za-z0-9_.-]*\/)*[A-Za-z0-9][A-Za-z0-9_.-]*\.(json|csv|tsv|txt|xlsx|xls)$/;
 const BLANK_TEMPLATE_WORKING_PATH = path.resolve(process.cwd(), "templates", "_blank", "working");
 
 export const REPORT_SOURCE_FILES = new Set<string>(ROOT_FILES);
@@ -17,7 +18,13 @@ export function isAllowedReportSourceFile(fileName: string) {
   const normalized = fileName.replaceAll("\\", "/");
   return !normalized.startsWith("/")
     && !normalized.split("/").some((part) => part === "..")
-    && (REPORT_SOURCE_FILES.has(normalized) || /^(components|assets)\/[A-Za-z0-9][A-Za-z0-9_.-]*\.(html|css|js|json|svg|txt)$/.test(normalized));
+    && (REPORT_SOURCE_FILES.has(normalized)
+      || /^(components|assets)\/[A-Za-z0-9][A-Za-z0-9_.-]*\.(html|css|js|json|svg|txt)$/.test(normalized)
+      || REPORT_DATA_FILE_PATTERN.test(normalized));
+}
+
+export function isAllowedReportDataFile(fileName: string) {
+  return REPORT_DATA_FILE_PATTERN.test(fileName.replaceAll("\\", "/"));
 }
 
 export function isAllowedReportWorkingFile(fileName: string) {

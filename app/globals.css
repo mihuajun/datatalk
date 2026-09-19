@@ -620,7 +620,7 @@ textarea {
 }
 
 .login-canvas {
-  background: linear-gradient(215deg, #f7faff 0%, #edf5ff 52%, #dcebff 100%);
+  background: #eef5ff;
 }
 
 .report-preview {
@@ -660,8 +660,12 @@ textarea {
 }
 
 .report-web-overlay {
-  left: 0;
-  right: 0;
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .report-web-mode > main {
@@ -675,15 +679,7 @@ textarea {
 
   .report-properties-panel {
     grid-column: 3;
-  }
-
-  .report-web-overlay {
-    left: var(--report-editor-ai-width);
-    right: var(--report-editor-properties-width);
-  }
-
-  .report-web-mode .report-web-overlay {
-    right: var(--report-editor-properties-width);
+    grid-row: 1;
   }
 }
 
@@ -700,6 +696,7 @@ textarea {
   .report-web-mode .report-web-overlay {
     position: static;
     grid-column: 1;
+    grid-row: auto;
   }
 
 }

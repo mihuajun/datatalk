@@ -18,12 +18,18 @@ type ConfigValue<T> = T | {
 };
 
 export type AppConfig = {
+  site?: {
+    webAppUrl?: ConfigValue<string>;
+  };
   database?: {
     url?: ConfigValue<string>;
     username?: ConfigValue<string>;
     password?: ConfigValue<string>;
   };
   reportEditLock?: {
+    enabled?: ConfigValue<boolean> | ConfigValue<string>;
+  };
+  resourceCenter?: {
     enabled?: ConfigValue<boolean> | ConfigValue<string>;
   };
 };
@@ -83,6 +89,27 @@ export function readRequiredStringConfigValue(value: ConfigValue<string> | undef
   }
 
   throw new Error(`Missing required config field: ${fieldName}`);
+}
+
+export function readOptionalStringConfigValue(value: ConfigValue<string> | undefined) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const placeholder = parseEnvPlaceholder(trimmed);
+    if (!placeholder) return trimmed;
+    const envValue = process.env[placeholder.envName]?.trim();
+    if (envValue) return envValue;
+    return typeof placeholder.defaultValue === "string" ? placeholder.defaultValue.trim() : "";
+  }
+
+  if (isRecord(value)) {
+    const envName = typeof value.env === "string" ? value.env.trim() : "";
+    const envValue = envName ? process.env[envName]?.trim() : "";
+    if (envValue) return envValue;
+    return typeof value.default === "string" ? value.default.trim() : "";
+  }
+
+  return "";
 }
 
 export function readBooleanConfigValue(value: unknown, fallback: boolean, fieldName: string) {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getAuthSession, isAdminSession } from "@/lib/server/auth-session";
+import { getAuthSession, isAdministratorSession } from "@/lib/server/auth-session";
 import {
   getAgentRuntimeStatus,
   installAgentRuntime,
@@ -14,7 +14,7 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ message: "未登录" }, { status: 401 });
   }
-  if (!isAdminSession(session)) {
+  if (!isAdministratorSession(session)) {
     return NextResponse.json({ message: "无权限" }, { status: 403 });
   }
 
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   if (!session) {
     return NextResponse.json({ message: "未登录" }, { status: 401 });
   }
-  if (!isAdminSession(session)) {
+  if (!isAdministratorSession(session)) {
     return NextResponse.json({ message: "无权限" }, { status: 403 });
   }
 

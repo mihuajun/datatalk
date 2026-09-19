@@ -181,8 +181,16 @@ export async function listReportAgentReferenceReports(input: {
   const conditions = ["tenant_id = ?", "deleted_at IS NULL"];
   const params: Array<string | number> = [input.tenantId];
   if (keyword) {
-    conditions.push("(code LIKE ? OR name LIKE ?)");
-    params.push(`%${keyword}%`, `%${keyword}%`);
+    const pattern = `%${keyword}%`;
+    // Report codes are ASCII. Comparing an ASCII column with a Chinese
+    // literal makes MySQL mix ascii_bin and utf8mb4 collations.
+    if (/^[\x00-\x7F]*$/.test(keyword)) {
+      conditions.push("(code LIKE ? OR name LIKE ?)");
+      params.push(pattern, pattern);
+    } else {
+      conditions.push("name LIKE ?");
+      params.push(pattern);
+    }
   }
 
   const [rows] = await getDbPool().query<ReferenceReportRow[]>(

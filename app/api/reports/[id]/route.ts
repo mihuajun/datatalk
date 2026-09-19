@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
+import { type ResourceAssetType, type ResourceCategoryOption, type ResourceItemRecord } from "@/lib/resource-center-types";
 import { getAuthSession } from "@/lib/server/auth-session";
 import { deleteReportByCode, getCurrentReportPublicLink, getReportDetailByCode } from "@/lib/server/report-repository";
+import { isResourceCenterEnabled } from "@/lib/server/resource-center-config";
+import { getResourceItemBySource, listResourceCategories } from "@/lib/server/resource-repository";
 
 function parseReportCode(value: string) {
   const code = value.trim();
@@ -17,12 +20,41 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const result = await getReportDetailByCode(session.tenantId, reportCode);
     if (!result) return NextResponse.json({ message: "报表不存在" }, { status: 404 });
     const publicLink = await getCurrentReportPublicLink(session.tenantId, reportCode);
+    const resourceCenterEnabled = isResourceCenterEnabled();
+    let resourceItem: ResourceItemRecord | null = null;
+    let resourceCategories: ResourceCategoryOption[] = [];
+    let resourceCategoriesByType: Partial<Record<ResourceAssetType, ResourceCategoryOption[]>> = {};
+    if (resourceCenterEnabled) {
+      const assetTypes: ResourceAssetType[] = ["report", "template", "dataset"];
+      const [resourceItems, categoryLists] = await Promise.all([
+        Promise.all([
+          getResourceItemBySource(session.tenantId, "report", reportCode),
+          getResourceItemBySource(session.tenantId, "template", reportCode),
+          getResourceItemBySource(session.tenantId, "dataset", reportCode),
+        ]),
+        Promise.all(assetTypes.map((assetType) => listResourceCategories(assetType))),
+      ]);
+      resourceItem = resourceItems
+        .filter((item): item is ResourceItemRecord => Boolean(item))
+        .sort((left, right) => {
+          const publishedDifference = Date.parse(right.publishedAt || "") - Date.parse(left.publishedAt || "");
+          return Number.isNaN(publishedDifference) || publishedDifference === 0
+            ? right.id - left.id
+            : publishedDifference;
+        })[0] || null;
+      resourceCategoriesByType = Object.fromEntries(assetTypes.map((assetType, index) => [assetType, categoryLists[index]])) as typeof resourceCategoriesByType;
+      resourceCategories = resourceCategoriesByType.report || [];
+    }
     return NextResponse.json({
       ...result,
       publicLinkCode: publicLink?.publicLinkCode || null,
       publicLinkPassword: publicLink?.publicLinkPassword || null,
       publicLinkPasswordEnabled: publicLink?.publicLinkPasswordEnabled ?? false,
       publicLinkExpiresAt: publicLink?.publicLinkExpiresAt || null,
+      resourceCenterEnabled,
+      resourceItem,
+      resourceCategories,
+      resourceCategoriesByType,
     });
   } catch (error) {
     console.error("Get report detail failed", error);

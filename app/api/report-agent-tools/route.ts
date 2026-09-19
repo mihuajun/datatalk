@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { authorizeReportAgentSessionBinding, markReportAgentSqlPreviewSuccess } from "@/lib/server/report-agent-session-binding";
 import { type ReportAgentToolScope } from "@/lib/server/report-agent-tool-auth";
+import { generateDataTalkImage } from "@/lib/server/datatalk-image-gen-service";
+import { requestReportPreviewInspection, type ReportPreviewScreenshotMode } from "@/lib/server/report-preview-inspection-bridge";
 import {
   getReportAgentDataSourceSchema,
   listReportAgentDataSources,
@@ -9,7 +11,7 @@ import {
   previewReportAgentSql,
   readReportAgentReferenceReport,
 } from "@/lib/server/report-agent-tools";
-import { proposeMetricKnowledge, recordMetricFeedback, searchMetricKnowledge } from "@/lib/server/report-metric-knowledge-service";
+import { listMetricKnowledge, proposeMetricKnowledge, recordMetricFeedback, searchMetricKnowledge } from "@/lib/server/report-metric-knowledge-service";
 import { normalizeReportQueryError } from "@/lib/server/report-query-gateway";
 import { getReportDetailByCode } from "@/lib/server/report-repository";
 
@@ -19,17 +21,22 @@ type ToolName =
   | "preview_sql"
   | "list_reference_reports"
   | "read_reference_report"
+  | "list_metric_knowledge"
   | "search_metric_knowledge"
   | "propose_metric_knowledge"
-  | "record_metric_feedback";
+  | "record_metric_feedback"
+  | "inspect_report_preview"
+  | "datatalk-image-gen";
 
 function toolScope(tool: ToolName): ReportAgentToolScope {
   if (tool === "get_data_source_schema") return "schema:read";
   if (tool === "preview_sql") return "sql:preview";
   if (tool === "list_reference_reports" || tool === "read_reference_report") return "report:read";
-  if (tool === "search_metric_knowledge") return "metric:read";
+  if (tool === "search_metric_knowledge" || tool === "list_metric_knowledge") return "metric:read";
   if (tool === "propose_metric_knowledge") return "metric:propose";
   if (tool === "record_metric_feedback") return "metric:feedback";
+  if (tool === "inspect_report_preview") return "preview:inspect";
+  if (tool === "datatalk-image-gen") return "image:generate";
   return "datasource:list";
 }
 
@@ -47,10 +54,24 @@ function errorStatus(code: string) {
     return 401;
   }
   if (code === "REPORT_AGENT_TOOL_FORBIDDEN") return 403;
+  if (code === "REPORT_PREVIEW_INSPECTION_FORBIDDEN") return 403;
+  if (code === "REPORT_PREVIEW_INSPECTION_NOT_PENDING") return 409;
+  if (code === "REPORT_PREVIEW_CLIENT_UNAVAILABLE" || code === "REPORT_PREVIEW_INSPECTION_TIMEOUT") return 503;
+  if (code === "IMAGE_MODEL_NOT_CONFIGURED") return 409;
+  if (code === "IMAGE_GENERATION_RATE_LIMITED") return 429;
+  if (code === "IMAGE_GENERATION_BUSY") return 503;
+  if (code === "IMAGE_GENERATION_TIMEOUT") return 504;
+  if (code === "IMAGE_GENERATION_CANCELLED") return 408;
+  if (code === "IMAGE_GENERATION_UPSTREAM_ERROR" || code === "IMAGE_GENERATION_INVALID_RESPONSE" || code === "IMAGE_GENERATION_RESULT_TOO_LARGE") return 502;
   if (code === "METRIC_NOT_FOUND" || code === "REPORT_AGENT_REFERENCE_NOT_FOUND") return 404;
   if (queryCode === "QUERY_CONNECTION_FAILED") return 503;
   if (
     code === "DATA_SOURCE_REF_REQUIRED" ||
+    code === "IMAGE_PROMPT_REQUIRED" ||
+    code === "IMAGE_PROMPT_TOO_LONG" ||
+    code === "IMAGE_GENERATION_INVALID_PARAMS" ||
+    code === "REPORT_PREVIEW_SELECTOR_REQUIRED" ||
+    code === "REPORT_PREVIEW_SELECTOR_INVALID" ||
     code === "REPORT_AGENT_TOOL_SQL_REQUIRED" ||
     code === "REPORT_AGENT_TOOL_INVALID_PARAMS" ||
     code === "REPORT_AGENT_REFERENCE_REPORT_REQUIRED" ||
@@ -97,9 +118,12 @@ export async function POST(request: Request) {
     && tool !== "preview_sql"
     && tool !== "list_reference_reports"
     && tool !== "read_reference_report"
+    && tool !== "list_metric_knowledge"
     && tool !== "search_metric_knowledge"
     && tool !== "propose_metric_knowledge"
     && tool !== "record_metric_feedback"
+    && tool !== "inspect_report_preview"
+    && tool !== "datatalk-image-gen"
   ) {
     return NextResponse.json({ message: "tool 不正确" }, { status: 400 });
   }
@@ -117,6 +141,37 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         result: { items: await listReportAgentDataSources(binding.tenantId) },
+      });
+    }
+
+    if (tool === "inspect_report_preview") {
+      const screenshotMode: ReportPreviewScreenshotMode = body.args?.screenshotMode === "full"
+        ? "full"
+        : body.args?.screenshotMode === "element"
+          ? "element"
+          : "thumbnail";
+      return NextResponse.json({
+        ok: true,
+        result: await requestReportPreviewInspection({
+          dshSessionId: binding.dshSessionId,
+          tenantId: binding.tenantId,
+          userId: binding.userId,
+          reportCode: binding.reportCode,
+          includeScreenshot: body.args?.includeScreenshot === true,
+          screenshotMode,
+          screenshotSelector: typeof body.args?.screenshotSelector === "string" ? body.args.screenshotSelector : undefined,
+        }),
+      });
+    }
+
+    if (tool === "datatalk-image-gen") {
+      return NextResponse.json({
+        ok: true,
+        result: await generateDataTalkImage({
+          userId: binding.userId,
+          args: body.args || {},
+          signal: request.signal,
+        }),
       });
     }
 
@@ -152,6 +207,16 @@ export async function POST(request: Request) {
           tenantId: binding.tenantId,
           reportCode: typeof body.args?.reportCode === "string" ? body.args.reportCode : "",
           files: body.args?.files,
+        }),
+      });
+    }
+
+    if (tool === "list_metric_knowledge") {
+      return NextResponse.json({
+        ok: true,
+        result: await listMetricKnowledge(binding.tenantId, {
+          keyword: typeof body.args?.keyword === "string" ? body.args.keyword : "",
+          limit: typeof body.args?.limit === "number" ? body.args.limit : Number(body.args?.limit),
         }),
       });
     }

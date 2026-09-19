@@ -1,5 +1,7 @@
 import path from "node:path";
 
+import { readAppConfig, readOptionalStringConfigValue } from "@/lib/server/app-config";
+
 const JDBC_PREFIX = "jdbc:";
 export type MySqlDatabaseConfig = {
   kind: "mysql";
@@ -46,7 +48,7 @@ function defaultSqlitePath() {
     ? path.resolve(configuredStorageRoot)
     : (process.env.NODE_ENV === "production" && (cwd === "/app" || cwd.startsWith("/app/")))
       ? "/app/workspace"
-      : path.resolve(cwd, "..", "chat-bi-workspace");
+      : path.resolve(cwd, "..", "datatalk-workspace");
   return path.join(storageRoot, "chat-bi.sqlite");
 }
 
@@ -77,9 +79,13 @@ function sqliteConfig(databaseUrl = "") : SqliteDatabaseConfig {
 }
 
 export function getDatabaseConfig(): DatabaseConfig {
-  const envUrl = process.env.DATABASE_URL?.trim() || "";
-  const envUsername = process.env.DATABASE_USERNAME?.trim() || "";
-  const envPassword = process.env.DATABASE_PASSWORD?.trim() || "";
+  const appConfig = readAppConfig();
+  const configuredUrl = readOptionalStringConfigValue(appConfig?.database?.url);
+  const configuredUsername = readOptionalStringConfigValue(appConfig?.database?.username);
+  const configuredPassword = readOptionalStringConfigValue(appConfig?.database?.password);
+  const envUrl = configuredUrl || process.env.DATABASE_URL?.trim() || "";
+  const envUsername = configuredUsername || process.env.DATABASE_USERNAME?.trim() || "";
+  const envPassword = configuredPassword || process.env.DATABASE_PASSWORD?.trim() || "";
 
   if (!envUrl) return sqliteConfig();
   if (envUrl.toLowerCase().startsWith("sqlite:")) return sqliteConfig(envUrl);

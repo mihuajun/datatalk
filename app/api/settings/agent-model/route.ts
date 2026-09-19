@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { getAuthSession, isAdminSession } from "@/lib/server/auth-session";
+import { getAuthSession, isAdministratorSession } from "@/lib/server/auth-session";
 import { getAgentModelConfig, saveAgentModelConfig } from "@/lib/server/agent-runtime";
 
 export async function GET() {
   const session = await getAuthSession();
   if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-  if (!isAdminSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
+  if (!isAdministratorSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
 
   try {
     return NextResponse.json({ model: getAgentModelConfig() });
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const session = await getAuthSession();
   if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-  if (!isAdminSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
+  if (!isAdministratorSession(session)) return NextResponse.json({ message: "无权限" }, { status: 403 });
 
   try {
     const body = await request.json() as Record<string, unknown>;
@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       baseUrl: text(body.baseUrl),
       apiKey: text(body.apiKey),
       model: text(body.model),
+      imageModel: text(body.imageModel),
     });
     return NextResponse.json({ message: "模型配置已保存并立即生效", model });
   } catch (error) {

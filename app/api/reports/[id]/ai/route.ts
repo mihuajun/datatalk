@@ -2,10 +2,12 @@ import { getAuthSession } from "@/lib/server/auth-session";
 import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimePromptImage, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
 import { getAgentRuntimeStatus } from "@/lib/server/agent-runtime";
 import { bindReportAgentSession } from "@/lib/server/report-agent-session-binding";
+import { registerReportPreviewClient } from "@/lib/server/report-preview-inspection-bridge";
 import { isReportEditLockEnabled } from "@/lib/server/report-edit-lock";
 import { getReportAiConversation, getReportDetailByCode, readReportWorkspaceSnapshot, saveReportAiConversationIndex, updateReportAiConversationTitle } from "@/lib/server/report-repository";
 import { getWorkspaceHead, getWorkspaceStatusEntries } from "@/lib/server/local-git";
 import { finalizeMetricKnowledgeProposals } from "@/lib/server/report-metric-knowledge-service";
+import { cleanupRuntimeAttachments, stageRuntimeAttachments, type RuntimeAttachmentInput } from "@/lib/server/report-runtime-attachments";
 import { getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
 import { withReportAiWorkspaceCommitLock } from "@/lib/server/report-ai-workspace-lock";
 import { commitRuntimeWorkspaceChanges } from "@/lib/server/report-workspace-service";
@@ -29,6 +31,7 @@ function runtimeTitleFromEvent(event: { type?: string; data?: unknown }) {
 function toUserFacingAiError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   if (message === "AGENT_RUNTIME_TIMEOUT") return "AI 处理超时，请稍后重试；如果持续超时，请检查 Agent Runtime。";
+  if (message === "AGENT_RUNTIME_UNAUTHORIZED") return "Agent Runtime 鉴权已失效，请重启 Agent Runtime 后重试。";
   if (message === "DSH_EVENT_STREAM_FAILED" || message === "DSH_STREAM_FAILED") return "AI 实时连接中断，请稍后重试。";
   if (message.includes("UNDECLARED_WORKSPACE_CHANGES")) return "本次 AI 修改未提交，请检查报表工作区后重试。";
   if (message.toLowerCase().includes("does not support image input") || message.toLowerCase().includes("image input is not supported")) {
@@ -40,6 +43,63 @@ function toUserFacingAiError(error: unknown) {
 const aiImageMediaTypes = new Set<RuntimePromptImage["mediaType"]>(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const maxAiImages = 4;
 const maxAiImageDataChars = 14 * 1024 * 1024;
+
+type ParsedAiRequest = {
+  message: string;
+  images: unknown;
+  lockToken: string;
+  conversationId: string | undefined;
+  files: RuntimeAttachmentInput[];
+};
+
+function formText(formData: FormData, name: string) {
+  const value = formData.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+function isRuntimeAttachmentFile(value: FormDataEntryValue): value is File {
+  return typeof value !== "string"
+    && typeof value.name === "string"
+    && typeof value.size === "number"
+    && typeof value.arrayBuffer === "function";
+}
+
+async function parseAiRequest(request: Request): Promise<ParsedAiRequest> {
+  const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+  if (!contentType.includes("multipart/form-data")) {
+    const body = await request.json().catch(() => ({})) as { message?: unknown; images?: unknown; lockToken?: unknown; conversationId?: unknown };
+    return {
+      message: typeof body.message === "string" ? body.message.trim() : "",
+      images: body.images,
+      lockToken: typeof body.lockToken === "string" ? body.lockToken : "",
+      conversationId: typeof body.conversationId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.conversationId) ? body.conversationId : undefined,
+      files: [],
+    };
+  }
+
+  const formData = await request.formData();
+  const rawImages = formData.get("images");
+  let images: unknown;
+  if (typeof rawImages === "string" && rawImages.trim()) {
+    try {
+      images = JSON.parse(rawImages);
+    } catch {
+      throw new Error("图片参数无效");
+    }
+  }
+
+  const files = formData.getAll("files");
+  if (files.some((file) => !isRuntimeAttachmentFile(file))) throw new Error("附件参数无效");
+
+  const conversationId = formText(formData, "conversationId");
+  return {
+    message: formText(formData, "message").trim(),
+    images,
+    lockToken: formText(formData, "lockToken"),
+    conversationId: /^[A-Za-z0-9_-]{1,80}$/.test(conversationId) ? conversationId : undefined,
+    files: files.filter(isRuntimeAttachmentFile),
+  };
+}
 
 function parseAiImages(value: unknown): RuntimePromptImage[] {
   if (value === undefined) return [];
@@ -70,6 +130,7 @@ function splitWorkspaceChanges(entries: Array<{ path: string; status: string }>)
 
   for (const entry of entries) {
     if (!entry.path) continue;
+    if (entry.path === "runtime" || entry.path.startsWith("runtime/")) continue;
     if (!isAllowedReportWorkingFile(entry.path)) continue;
     if (entry.status.includes("D") && !entry.status.includes("R")) {
       deletedFiles.push(entry.path);
@@ -89,17 +150,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!session) return new Response(JSON.stringify({ message: "未登录" }), { status: 401, headers: { "Content-Type": "application/json" } });
 
   const reportCode = (await params).id;
-  const body = await request.json().catch(() => ({})) as { message?: unknown; images?: unknown; lockToken?: unknown; conversationId?: unknown };
-  const message = typeof body.message === "string" ? body.message.trim() : "";
+  let parsedRequest: ParsedAiRequest;
+  try {
+    parsedRequest = await parseAiRequest(request);
+  } catch (parseError) {
+    return new Response(JSON.stringify({ message: parseError instanceof Error ? parseError.message : "AI 请求参数无效" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
+  const message = parsedRequest.message;
   let images: RuntimePromptImage[];
   try {
-    images = parseAiImages(body.images);
+    images = parseAiImages(parsedRequest.images);
   } catch (imageError) {
     return new Response(JSON.stringify({ message: imageError instanceof Error ? imageError.message : "图片参数无效" }), { status: 400, headers: { "Content-Type": "application/json" } });
   }
-  const lockToken = typeof body.lockToken === "string" ? body.lockToken : "";
-  const conversationId = typeof body.conversationId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.conversationId) ? body.conversationId : undefined;
-  if (!message && !images.length) return new Response(JSON.stringify({ message: "请输入报表请求或添加图片" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  const lockToken = parsedRequest.lockToken;
+  const conversationId = parsedRequest.conversationId;
+  if (!message && !images.length && !parsedRequest.files.length) return new Response(JSON.stringify({ message: "请输入报表请求或添加图片或附件" }), { status: 400, headers: { "Content-Type": "application/json" } });
   if (isReportEditLockEnabled() && !lockToken) return new Response(JSON.stringify({ message: "编辑锁已失效，请退出后重新进入" }), { status: 409, headers: { "Content-Type": "application/json" } });
 
   const current = await getReportDetailByCode(session.tenantId, reportCode);
@@ -110,6 +176,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const previousConversation = conversationId ? await getReportAiConversation(session.tenantId, reportCode, conversationId) : null;
   const workingDirectory = getReportWorkingPath(session.tenantId, reportCode);
+  let stagedAttachments;
+  try {
+    stagedAttachments = await stageRuntimeAttachments({
+      workingDirectory,
+      files: parsedRequest.files,
+    });
+  } catch (attachmentError) {
+    return new Response(JSON.stringify({ message: attachmentError instanceof Error ? attachmentError.message : "附件上传失败" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
 
   let clientDisconnected = false;
   const stream = new ReadableStream<Uint8Array>({
@@ -124,6 +199,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         }
       };
 
+      const disposePreviewClientRef = { current: null as (() => void) | null };
       try {
         let persistedConversationId = conversationId;
         let conversation: Awaited<ReturnType<typeof saveReportAiConversationIndex>> | null = null;
@@ -179,12 +255,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         const runtimeResult = await requestReportAgentFromRuntime({
           message,
           images,
+          attachments: stagedAttachments.files,
           workingDirectory,
           reportName: current.report.name,
           sessionId: previousConversation?.dshSessionId,
           tenantId: session.tenantId,
           reportCode,
           onSessionReady: (dshSessionId) => {
+            disposePreviewClientRef.current?.();
+            disposePreviewClientRef.current = registerReportPreviewClient({
+              dshSessionId,
+              tenantId: session.tenantId,
+              userId: session.userId,
+              reportCode,
+              send,
+            });
             bindReportAgentSession({
               dshSessionId,
               tenantId: session.tenantId,
@@ -330,6 +415,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         send("error", { message: details ? `${publicError}：${details}` : publicError });
         send("done", { applied: false });
       } finally {
+        disposePreviewClientRef.current?.();
+        await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
         if (!clientDisconnected && controller.desiredSize !== null) controller.close();
       }
     },

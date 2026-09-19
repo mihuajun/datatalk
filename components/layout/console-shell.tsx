@@ -15,7 +15,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-import { getUserRoleLabel } from "@/lib/auth/roles";
+import { canAccessMembersRole, getUserRoleLabel, isAdministratorRole } from "@/lib/auth/roles";
 import type { AuthSession } from "@/lib/server/auth-session";
 const navItems = [
   { href: "/reports", label: "报表中心", icon: BarChart3 },
@@ -28,12 +28,16 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
   const pathname = usePathname();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
-  const visibleNavItems = navItems.filter(({ href }) => session?.role === "admin" || href === "/reports" || href === "/data-sources");
+  const visibleNavItems = navItems.filter(({ href }) => {
+    if (href === "/settings") return session ? isAdministratorRole(session.role) : false;
+    if (href === "/members") return session ? canAccessMembersRole(session.role) : false;
+    return href === "/reports" || href === "/data-sources";
+  });
   const isReportsPage = pathname === "/reports";
   const isReportEditorPage = pathname.startsWith("/reports/editor");
   const isReportPreviewPage = pathname.startsWith("/preview/");
   const isReportViewPage = pathname.startsWith("/view/");
-  const isPublicReportPage = pathname.startsWith("/link/");
+  const isPublicReportPage = pathname.startsWith("/link/") || pathname.startsWith("/share/");
 
   async function handleLogout() {
     setLoggingOut(true);

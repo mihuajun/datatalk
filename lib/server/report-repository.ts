@@ -9,7 +9,7 @@ import type { ReportCenterData, ReportDefinition, ReportFolder, ReportItem, Repo
 import { reportFilterManifestFromDefinition, type ReportFilterManifest } from "@/lib/report-filters";
 import type { WebFileMap } from "@/lib/report-web";
 import { getDbPool, withDatabaseReadRetry } from "@/lib/server/mysql";
-import { getWorkspaceHead } from "@/lib/server/local-git";
+import { getWorkspaceHead, getWorkspaceStatus } from "@/lib/server/local-git";
 import { generatePublicLinkPassword, hashPublicLinkPassword, hasPublicLinkAccess } from "@/lib/server/public-link-security";
 import { readReportFilterManifest } from "@/lib/server/report-filter-runtime";
 import { getReportWorkingPath, getReportWorkspacePath, initializeReportWorkspace, resolveReportSourcePath } from "@/lib/server/report-workspace";
@@ -312,7 +312,7 @@ function buildFolderTree(folderRows: ReportFolderRow[], reportRows: ReportRow[])
   return roots;
 }
 
-async function ensureDefaultReportFolder(tenantId: number) {
+export async function ensureDefaultReportFolder(tenantId: number) {
   const pool = getDbPool();
   const [defaultFolders] = await pool.query<RowDataPacket[]>(
     "SELECT id FROM tenant_report_folder WHERE tenant_id = ? AND is_default = 1 LIMIT 1",
@@ -416,6 +416,62 @@ export type ReportWorkspaceSnapshot = {
   fingerprint: string;
 };
 
+const WEB_IMAGE_MEDIA_TYPES: Record<string, string> = {
+  avif: "image/avif",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+};
+const MAX_INLINE_WEB_ASSET_BYTES = 5 * 1024 * 1024;
+const MAX_INLINE_WEB_ASSETS_TOTAL_BYTES = 30 * 1024 * 1024;
+const MAX_INLINE_WEB_ASSETS = 30;
+
+function referencedWebImagePaths(files: WebFileMap) {
+  const source = `${files["page.html"] || ""}\n${files["styles.css"] || ""}`;
+  const matches = source.matchAll(/(?:\.\/)?(assets\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:avif|gif|jpe?g|png|svg|webp))/gi);
+  return [...new Set(Array.from(matches, (match) => match[1]))]
+    .filter((relativePath) => !relativePath.split("/").some((segment) => segment === "." || segment === ".."))
+    .slice(0, MAX_INLINE_WEB_ASSETS);
+}
+
+async function readReferencedWebImageAssets(root: string, files: WebFileMap) {
+  const assets: Record<string, string> = {};
+  let totalBytes = 0;
+  const realRoot = await fs.realpath(root).catch(() => path.resolve(root));
+  for (const relativePath of referencedWebImagePaths(files)) {
+    const extension = relativePath.split(".").at(-1)?.toLowerCase() || "";
+    const mediaType = WEB_IMAGE_MEDIA_TYPES[extension];
+    if (!mediaType) continue;
+    const absolutePath = path.resolve(root, relativePath);
+    if (!absolutePath.startsWith(`${path.resolve(root)}${path.sep}`)) continue;
+    try {
+      const realAssetPath = await fs.realpath(absolutePath);
+      if (!realAssetPath.startsWith(`${realRoot}${path.sep}`)) continue;
+      const stat = await fs.stat(realAssetPath);
+      if (!stat.isFile() || stat.size > MAX_INLINE_WEB_ASSET_BYTES || totalBytes + stat.size > MAX_INLINE_WEB_ASSETS_TOTAL_BYTES) continue;
+      const content = await fs.readFile(realAssetPath);
+      totalBytes += content.byteLength;
+      assets[relativePath] = `data:${mediaType};base64,${content.toString("base64")}`;
+    } catch {
+      // A missing or unreadable referenced asset remains visible to the preview as a broken image.
+    }
+  }
+  return assets;
+}
+
+async function readWebFiles(root: string) {
+  const webFiles: WebFileMap = {};
+  for (const name of ["page.html", "styles.css", "app.js"] as const) {
+    try { webFiles[name] = await fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ root, name), "utf8"); } catch { /* optional workspace file */ }
+  }
+  const assets = await readReferencedWebImageAssets(root, webFiles);
+  if (Object.keys(assets).length) webFiles.assets = assets;
+  return webFiles;
+}
+
 async function findLatestWorkspaceMtime(root: string, relativeDirectory = ""): Promise<bigint> {
   let entries;
   try {
@@ -450,10 +506,7 @@ export async function getReportWorkspaceFingerprint(tenantId: number, reportCode
 }
 
 export async function readReportWorkspaceSnapshot(tenantId: number, reportCode: string, fingerprint?: string, fallbackFilters?: unknown): Promise<ReportWorkspaceSnapshot> {
-  const webFiles: WebFileMap = {};
-  for (const name of ["page.html", "styles.css", "app.js"] as const) {
-    try { webFiles[name] = await fs.readFile(resolveReportSourcePath(tenantId, reportCode, name), "utf8"); } catch { /* optional workspace file */ }
-  }
+  const webFiles = await readWebFiles(getReportWorkingPath(tenantId, reportCode));
   return {
     filterManifest: await readReportFilterManifest(tenantId, reportCode, "working", undefined, fallbackFilters),
     fingerprint: fingerprint || await getReportWorkspaceFingerprint(tenantId, reportCode),
@@ -470,20 +523,28 @@ async function getPublishedCommitHash(tenantId: number, reportCode: string, vers
   return rows[0]?.source_commit_hash || null;
 }
 
-async function readReleaseFile(releasePath: string, fileName: string) {
-  try {
-    return await fs.readFile(path.join(releasePath, fileName), "utf8");
-  } catch {
-    return null;
-  }
-}
-
 async function readPublicReleaseSnapshot(tenantId: number, reportCode: string, version: number, reportName: string) {
   const releasePath = path.join(getReportWorkspacePath(tenantId, reportCode), "releases", `v${version}`);
-  const files: Record<string, string> = {};
-  for (const name of ["page.html", "styles.css", "app.js"]) {
-    const content = await readReleaseFile(releasePath, name);
-    if (content !== null) files[name] = content;
+  const files = await readWebFiles(releasePath);
+
+  if (!files["page.html"]) {
+    try {
+      const [publishedCommitHash, workspaceHead, workspaceStatus] = await Promise.all([
+        getPublishedCommitHash(tenantId, reportCode, version),
+        getWorkspaceHead(tenantId, reportCode),
+        getWorkspaceStatus(tenantId, reportCode, "working"),
+      ]);
+      if (publishedCommitHash && workspaceHead === publishedCommitHash && workspaceStatus.length === 0) {
+        const workspace = await readReportWorkspaceSnapshot(tenantId, reportCode);
+        return {
+          definition: makeEmptyReportDefinition(reportName),
+          filterManifest: workspace.filterManifest,
+          webFiles: workspace.webFiles,
+        };
+      }
+    } catch {
+      // A missing release snapshot stays unavailable unless its working tree is provably identical.
+    }
   }
 
   const definition: ReportDefinition | null = makeEmptyReportDefinition(reportName);
@@ -495,6 +556,7 @@ async function readPublicReleaseSnapshot(tenantId: number, reportCode: string, v
       "page.html": files["page.html"],
       "styles.css": files["styles.css"],
       "app.js": files["app.js"],
+      ...(files.assets ? { assets: files.assets } : {}),
     } satisfies WebFileMap,
   };
 }
@@ -521,6 +583,7 @@ export async function getReportDetail(tenantId: number, reportId: number) {
     definition,
     filterManifest: workspace.filterManifest,
     webFiles: workspace.webFiles,
+    workspaceFingerprint: workspace.fingerprint,
     workingCommitHash: await getWorkspaceHead(tenantId, row.code),
     publishedCommitHash: await getPublishedCommitHash(tenantId, row.code, row.current_release_version),
   };
@@ -548,24 +611,37 @@ export async function getReportDetailByCode(tenantId: number, reportCode: string
     definition,
     filterManifest: workspace.filterManifest,
     webFiles: workspace.webFiles,
+    workspaceFingerprint: workspace.fingerprint,
     workingCommitHash: await getWorkspaceHead(tenantId, reportCode),
     publishedCommitHash: await getPublishedCommitHash(tenantId, row.code, row.current_release_version),
   };
 }
 
-export async function getReportReleaseDetailByCode(tenantId: number, reportCode: string) {
+export async function getReportReleaseDetailByCode(tenantId: number, reportCode: string, requestedReleaseVersion?: number) {
   const [rows] = await withDatabaseReadRetry(() => getDbPool().query<ReportRow[]>(
     `SELECT ${REPORT_FIELDS} FROM tenant_report WHERE tenant_id = ? AND code = ? AND ${ACTIVE_REPORT_WHERE} LIMIT 1`,
     [tenantId, reportCode],
   ));
   const row = rows[0];
-  if (!row || row.current_release_version == null) return null;
+  const releaseVersion = requestedReleaseVersion ?? row?.current_release_version;
+  if (!row || releaseVersion == null) return null;
 
-  const snapshot = await readPublicReleaseSnapshot(tenantId, reportCode, row.current_release_version, row.name);
+  if (requestedReleaseVersion != null) {
+    const [releaseRows] = await withDatabaseReadRetry(() => getDbPool().query<Array<RowDataPacket & { version: number }>>(
+      `SELECT version
+         FROM report_release
+        WHERE tenant_id = ? AND report_code = ? AND version = ? AND status = 'published'
+        LIMIT 1`,
+      [tenantId, reportCode, requestedReleaseVersion],
+    ));
+    if (!releaseRows[0]) return null;
+  }
+
+  const snapshot = await readPublicReleaseSnapshot(tenantId, reportCode, releaseVersion, row.name);
   return {
     report: normalizeReport(row),
     ...snapshot,
-    releaseVersion: row.current_release_version,
+    releaseVersion,
   };
 }
 

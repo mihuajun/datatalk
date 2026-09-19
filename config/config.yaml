@@ -4,6 +4,13 @@
 # the embedded SQLite database at SQLITE_DATABASE_PATH (or the runtime default).
 # Supports `${ENV_NAME}` and `${ENV_NAME:default_value}` for other settings.
 
+site:
+  # The only external origin accepted as a post-login return target.
+  webAppUrl: "${WEB_APP_URL:http://localhost:3001}"
+
+# AUTH_SESSION_SECRET must be identical in datatalk-studio and datatalk-web.
+# Set AUTH_COOKIE_DOMAIN to the shared parent domain when the apps use different subdomains.
+
 database:
   url: "${DATABASE_URL}"
   username: "${DATABASE_USERNAME}"
@@ -11,3 +18,6 @@ database:
 
 reportEditLock:
   enabled: "${REPORT_EDIT_LOCK_ENABLED:false}"
+
+resourceCenter:
+  enabled: "${RESOURCE_CENTER_ENABLED:false}"

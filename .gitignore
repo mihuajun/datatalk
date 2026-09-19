@@ -10,3 +10,28 @@ node_modules/
 .env.test.local
 .env.production.local
 config/config.local.yaml
+
+# Local secrets and credentials
+.env.*
+!.env.example
+!.env.template
+*.secret
+*.secrets
+*.credentials
+*.credentials.json
+*.pem
+*.key
+
+# Local databases, runtime state, and logs
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db
+*.db-*
+*.log
+runtime/
+storage/
+uploads/
+
+# Operating-system metadata
+.DS_Store

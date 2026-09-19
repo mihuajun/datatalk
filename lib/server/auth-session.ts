@@ -1,8 +1,13 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { cookies } from "next/headers";
 import type { RowDataPacket } from "mysql2/promise";
 
+import { ensureWorkspaceStorageLayout, RUNTIME_STORAGE_ROOT } from "@/lib/server/workspace-storage";
+
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { isAdminRole, normalizeUserRole as normalizeRoleValue, type UserRole } from "@/lib/auth/roles";
+import { canAccessMembersRole, canManageMembersRole, isAdminRole, isAdministratorRole, normalizeUserRole as normalizeRoleValue, type UserRole } from "@/lib/auth/roles";
 import { getDbPool } from "@/lib/server/mysql";
 
 export type { UserRole } from "@/lib/auth/roles";
@@ -32,13 +37,59 @@ export function isAdminSession(session: AuthSession | null): boolean {
   return session ? isAdminRole(session.role) : false;
 }
 
-function encodeSession(session: AuthSession) {
-  return Buffer.from(JSON.stringify(session)).toString("base64url");
+export function isAdministratorSession(session: AuthSession | null): boolean {
+  return session ? isAdministratorRole(session.role) : false;
+}
+
+export function canAccessMembersSession(session: AuthSession | null): boolean {
+  return session ? canAccessMembersRole(session.role) : false;
+}
+
+export function canManageMembersSession(session: AuthSession | null): boolean {
+  return session ? canManageMembersRole(session.role) : false;
+}
+
+const SESSION_SECRET_PATH = path.join(RUNTIME_STORAGE_ROOT, "auth-session.secret");
+
+function getSessionSecret() {
+  const configured = process.env.AUTH_SESSION_SECRET?.trim();
+  if (configured) return configured;
+  ensureWorkspaceStorageLayout();
+  if (!fs.existsSync(SESSION_SECRET_PATH)) {
+    fs.writeFileSync(SESSION_SECRET_PATH, randomBytes(32).toString("base64url"), { mode: 0o600 });
+  }
+  return fs.readFileSync(SESSION_SECRET_PATH, "utf8").trim();
+}
+
+function signSession(value: string) {
+  return createHmac("sha256", getSessionSecret()).update(value).digest("base64url");
+}
+
+function authCookieOptions() {
+  const domain = process.env.AUTH_COOKIE_DOMAIN?.trim();
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24,
+    ...(domain ? { domain } : {}),
+  };
+}
+
+export function encodeAuthSession(session: AuthSession) {
+  const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
+  return `${payload}.${signSession(payload)}`;
 }
 
 function decodeSession(value: string): AuthSession | null {
   try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<AuthSession>;
+    const [payload, signature] = value.split(".");
+    if (!payload || !signature) return null;
+    const expected = Buffer.from(signSession(payload));
+    const received = Buffer.from(signature);
+    if (expected.length !== received.length || !timingSafeEqual(expected, received)) return null;
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<AuthSession>;
 
     if (!parsed?.userId || !parsed?.tenantId || !parsed?.username) {
       return null;
@@ -94,13 +145,7 @@ export async function getAuthSession() {
 export async function setAuthSession(session: AuthSession) {
   const cookieStore = await cookies();
 
-  cookieStore.set(AUTH_COOKIE_NAME, encodeSession(session), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24,
-  });
+  cookieStore.set(AUTH_COOKIE_NAME, encodeAuthSession(session), authCookieOptions());
 }
 
 export async function clearAuthSession() {

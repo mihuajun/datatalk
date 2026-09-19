@@ -40,6 +40,7 @@ export default async function ReportPreviewPage({ params, searchParams }: { para
         source="working"
         srcDoc={composeWebReportSrcDoc(webFiles, { filters: filterResolution.values, urlFilters: filterResolution.urlValues, defaults: filterResolution.defaults })}
         refreshKey={`${reportCode}-${result.workingCommitHash || "working"}-${JSON.stringify(filterResolution.values)}`}
+        horizontalOverflowMode="auto"
       />
     </main>
   );

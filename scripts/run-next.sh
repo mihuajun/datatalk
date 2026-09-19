@@ -50,4 +50,45 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
+NEXT_PORT=""
+EXPECT_PORT_VALUE=false
+for argument in "$@"; do
+  if [ "$EXPECT_PORT_VALUE" = true ]; then
+    NEXT_PORT="$argument"
+    EXPECT_PORT_VALUE=false
+    continue
+  fi
+
+  case "$argument" in
+    -p|--port)
+      EXPECT_PORT_VALUE=true
+      ;;
+    --port=*)
+      NEXT_PORT="${argument#--port=}"
+      ;;
+    -p[0-9]*)
+      NEXT_PORT="${argument#-p}"
+      ;;
+  esac
+done
+
+if [ "$EXPECT_PORT_VALUE" = true ]; then
+  printf 'Missing value for Next.js port option.\n' >&2
+  exit 1
+fi
+
+if [ -n "$NEXT_PORT" ]; then
+  case "$NEXT_PORT" in
+    *[!0-9]*)
+      printf 'Invalid Next.js port: %s\n' "$NEXT_PORT" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$NEXT_PORT" -lt 1 ] || [ "$NEXT_PORT" -gt 65535 ]; then
+    printf 'Invalid Next.js port: %s\n' "$NEXT_PORT" >&2
+    exit 1
+  fi
+  export PORT="$NEXT_PORT"
+fi
+
 exec "$NODE_BIN" "$NEXT_BIN" "$@"

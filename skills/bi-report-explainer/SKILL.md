@@ -13,7 +13,7 @@ whenToUse: 用户问“这个指标怎么计算”“这个数字为什么是 12
 这个项目的报表解读不能只看页面文案，必须沿着“工作区文件 -> server.js 数据逻辑 -> 页面脚本”这条链路解释。
 
 - 报表编辑页入口在 `/app/reports/editor/[code]/page.tsx`。
-- 当前报表真实内容在 `../chat-bi-workspace/data/<tenantId>/<reportCode>/working/`。
+- 当前报表真实内容在 `../datatalk-workspace/data/<tenantId>/<reportCode>/working/`。
 - 页面里的最终显示值，可能来自 `server.js` 中的数据库查询结果，也可能来自 `server.js` 中直接返回的 mock 数据，或前端二次计算。
 
 ## 任务目标

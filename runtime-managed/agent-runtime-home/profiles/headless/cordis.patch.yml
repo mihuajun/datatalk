@@ -2,8 +2,12 @@
 # a top-level YAML array of loader patch entries (id-targeted config
 # overrides, disables, and insert lists; `!!js` expressions allowed).
 - insert:
+    - id: report-editor-context
+      name: '../../plugins/report-editor-context.mjs'
     - id: report-tools
       name: '../../plugins/report-tools.mjs'
+    - id: datatalk-image-gen
+      name: '../../plugins/datatalk-image-gen.mjs'
     - id: web-search-proxy
       name: '../../plugins/web-search-proxy.mjs'
 
