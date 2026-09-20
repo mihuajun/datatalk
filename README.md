@@ -18,6 +18,29 @@ DataTalk Studio 是 DataTalk 的开源报表工作台。你可以先在官网浏
 
 DataTalk 的官网和后续企业服务将围绕 `datatalk-web`、企业 SaaS 和私有化部署持续建设。开源仓库主要聚焦 Studio 的产品能力和工程实现；企业客户可通过[官网产品与应用场景页面](https://datatalk.alenfive.top/product?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)了解最新服务形态、行业方案和部署选项。
 
+## 界面预览
+
+以下截图来自 DataTalk 官网展示的当前产品界面，帮助你在阅读代码和启动项目之前，先直观看到 Studio 的主要工作流：
+
+<table>
+  <tr>
+    <th>新建连接器</th>
+    <th>报告编辑工作台</th>
+  </tr>
+  <tr>
+    <td>
+      <a href="docs/screenshots/new-connector.png">
+        <img src="docs/screenshots/new-connector.png" alt="DataTalk 新建连接器页面" width="100%" />
+      </a>
+    </td>
+    <td>
+      <a href="docs/screenshots/report-editor.png">
+        <img src="docs/screenshots/report-editor.png" alt="DataTalk 报告编辑工作台" width="100%" />
+      </a>
+    </td>
+  </tr>
+</table>
+
 ## 能力概览
 
 - **对话式报表开发**：通过自然语言创建报表、调整指标、修改筛选条件、更新图表和编辑页面结构。
