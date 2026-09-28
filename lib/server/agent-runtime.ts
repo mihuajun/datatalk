@@ -31,6 +31,9 @@ const DEFAULT_PORT = 3080;
 const INSTALL_HEAP_OPTION = "--max-old-space-size=8192";
 const DEFAULT_AGENT_RUNTIME_VERSION = "0.1.2-rc.1";
 const MANAGED_PNPM_VERSION = "12.3.4";
+const MIN_RUNTIME_NODE_MAJOR = 22;
+const MIN_RUNTIME_NODE_MINOR = 5;
+const VISION_PROBE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const AUTH_BOOTSTRAP_RETRIES = 20;
 const AUTH_BOOTSTRAP_RETRY_DELAY_MS = 100;
 
@@ -52,10 +55,58 @@ function runtimeNodeOptions() {
   return [...currentOptions, ...nextOptions].join(" ");
 }
 
+function isCompatibleRuntimeNode(nodePath: string) {
+  if (!nodePath) return false;
+
+  if (nodePath === process.execPath) {
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    return major > MIN_RUNTIME_NODE_MAJOR
+      || (major === MIN_RUNTIME_NODE_MAJOR && minor >= MIN_RUNTIME_NODE_MINOR);
+  }
+
+  try {
+    execFileSync(nodePath, [
+      "-e",
+      `const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > ${MIN_RUNTIME_NODE_MAJOR} || (major === ${MIN_RUNTIME_NODE_MAJOR} && minor >= ${MIN_RUNTIME_NODE_MINOR}) ? 0 : 1)`,
+    ], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function runtimeNodeCandidates() {
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  const inheritedPath = (process.env[pathKey] || "").split(path.delimiter).filter(Boolean);
+  const configured = process.env.NODE_BIN_OVERRIDE?.trim();
+  const nvmNode = process.env.NVM_BIN?.trim() ? path.join(process.env.NVM_BIN.trim(), "node") : "";
+
+  return [...new Set([
+    configured,
+    process.execPath,
+    nvmNode,
+    ...inheritedPath.map((entry) => path.join(entry, process.platform === "win32" ? "node.exe" : "node")),
+  ].filter((candidate): candidate is string => Boolean(candidate)))];
+}
+
+function resolveRuntimeNodeExecutable() {
+  const candidate = runtimeNodeCandidates().find(isCompatibleRuntimeNode);
+  if (candidate) return candidate;
+
+  throw new Error(`Agent Runtime 需要 Node.js >=${MIN_RUNTIME_NODE_MAJOR}.${MIN_RUNTIME_NODE_MINOR}.0，请设置 NODE_BIN_OVERRIDE 指向兼容的 Node.js`);
+}
+
+function resolveRuntimeNpmCli(nodePath: string) {
+  const npmCliPath = path.resolve(path.dirname(nodePath), "../lib/node_modules/npm/bin/npm-cli.js");
+  if (fs.existsSync(npmCliPath)) return npmCliPath;
+
+  throw new Error(`未找到与 ${nodePath} 匹配的 npm，请设置 NODE_BIN_OVERRIDE 指向完整的 Node.js 安装`);
+}
+
 function withRuntimeToolPath(environment: NodeJS.ProcessEnv) {
   const pathKey = Object.keys(environment).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   const inherited = (environment[pathKey] || "").split(path.delimiter).filter(Boolean);
-  const entries = [LOCAL_TOOL_BIN_DIR, path.dirname(process.execPath), ...inherited];
+  const entries = [LOCAL_TOOL_BIN_DIR, path.dirname(resolveRuntimeNodeExecutable()), ...inherited];
   return {
     ...environment,
     [pathKey]: [...new Set(entries)].join(path.delimiter),
@@ -130,7 +181,7 @@ export function getAgentRuntimeExecutionConfig(workingDirectory: string) {
   if (modelConfig) writeModelConfig(modelConfig);
   const workspaceDirectory = path.resolve(workingDirectory);
   return {
-    command: process.execPath,
+    command: resolveRuntimeNodeExecutable(),
     args: [DSH_ENTRY_PATH, "--profile", "headless"],
     cwd: workspaceDirectory,
     env: runtimeEnvironment(modelConfig),
@@ -468,13 +519,24 @@ async function verifyAgentModelConfig(baseUrl: string, apiKey: string, model: st
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages: [{ role: "user", content: "请只回复：ok" }], max_tokens: 8, temperature: 0 }),
+    body: JSON.stringify({
+      model,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "请识别这张图片中的主色，并只回复颜色名称。" },
+          { type: "image_url", image_url: { url: VISION_PROBE_DATA_URL } },
+        ],
+      }],
+      max_tokens: 16,
+      temperature: 0,
+    }),
     signal: AbortSignal.timeout(15000),
   });
 
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 240);
-    throw new Error(`模型配置校验失败（${response.status}）${detail ? `：${detail}` : ""}`);
+    throw new Error(`模型配置校验失败：当前模型或代理不支持图片输入（${response.status}）${detail ? `：${detail}` : ""}`);
   }
 }
 
@@ -811,9 +873,11 @@ function launchInstallCommand() {
 
   const startedAt = new Date().toISOString();
   const requestedVersion = getAgentRuntimePackageVersion();
+  const runtimeNode = resolveRuntimeNodeExecutable();
+  const npmCli = resolveRuntimeNpmCli(runtimeNode);
   appendLogDivider(INSTALL_LOG_PATH, `开始安装 @deepseek-ai/dsh@${requestedVersion}`);
   const logFd = fs.openSync(INSTALL_LOG_PATH, "a");
-  const child = spawn("npm", [
+  const child = spawn(runtimeNode, [npmCli,
     "install",
     `@deepseek-ai/dsh@${requestedVersion}`,
     "--save-exact",
@@ -903,12 +967,13 @@ export async function startAgentRuntime(lastAction: "start" | "restart" = "start
   const port = currentPort(stateFile);
   const binPath = resolveLocalBinPath();
   const modelConfig = readModelConfig();
+  const runtimeNode = resolveRuntimeNodeExecutable();
   syncProjectSkillsToRuntime();
   if (modelConfig) writeModelConfig(modelConfig);
   appendLogDivider(LOG_PATH, `启动 dsh web --port ${port} --no-open`);
 
   const logFd = fs.openSync(LOG_PATH, "a");
-  const child = spawn(process.execPath, [DSH_ENTRY_PATH, "web", "--port", String(port), "--no-open"], {
+  const child = spawn(runtimeNode, [DSH_ENTRY_PATH, "web", "--port", String(port), "--no-open"], {
     cwd: INSTALL_DIR,
     env: runtimeEnvironment(modelConfig),
     detached: true,

@@ -50,7 +50,7 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
-NEXT_PORT=""
+NEXT_PORT="3000"
 EXPECT_PORT_VALUE=false
 for argument in "$@"; do
   if [ "$EXPECT_PORT_VALUE" = true ]; then

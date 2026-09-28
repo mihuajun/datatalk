@@ -1,5 +1,5 @@
 import { getAuthSession } from "@/lib/server/auth-session";
-import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimePromptImage, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
+import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimeEvent, type RuntimePromptImage, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
 import { getAgentRuntimeStatus } from "@/lib/server/agent-runtime";
 import { bindReportAgentSession } from "@/lib/server/report-agent-session-binding";
 import { registerReportPreviewClient } from "@/lib/server/report-preview-inspection-bridge";
@@ -10,6 +10,7 @@ import { finalizeMetricKnowledgeProposals } from "@/lib/server/report-metric-kno
 import { cleanupRuntimeAttachments, stageRuntimeAttachments, type RuntimeAttachmentInput } from "@/lib/server/report-runtime-attachments";
 import { getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
 import { withReportAiWorkspaceCommitLock } from "@/lib/server/report-ai-workspace-lock";
+import { validateReportWorkspace } from "@/lib/server/report-schema";
 import { commitRuntimeWorkspaceChanges } from "@/lib/server/report-workspace-service";
 
 function sseEvent(type: string, payload: unknown) {
@@ -33,6 +34,8 @@ function toUserFacingAiError(error: unknown) {
   if (message === "AGENT_RUNTIME_TIMEOUT") return "AI 处理超时，请稍后重试；如果持续超时，请检查 Agent Runtime。";
   if (message === "AGENT_RUNTIME_UNAUTHORIZED") return "Agent Runtime 鉴权已失效，请重启 Agent Runtime 后重试。";
   if (message === "DSH_EVENT_STREAM_FAILED" || message === "DSH_STREAM_FAILED") return "AI 实时连接中断，请稍后重试。";
+  if (message.startsWith("REPORT_AGENT_TOOL_TRANSPORT_FAILED")) return "报表预览工具无法连接 Studio，请确认 Studio 端口和 Runtime 已同步后重试。";
+  if (message === "REPORT_PREVIEW_CLIENT_UNAVAILABLE") return "当前编辑器预览未连接，无法进行截图检查；请保持报表编辑页打开后重试。";
   if (message.includes("UNDECLARED_WORKSPACE_CHANGES")) return "本次 AI 修改未提交，请检查报表工作区后重试。";
   if (message.toLowerCase().includes("does not support image input") || message.toLowerCase().includes("image input is not supported")) {
     return "当前模型不支持图片输入，请在 Agent Runtime 模型配置中选择支持视觉输入的模型。";
@@ -43,6 +46,76 @@ function toUserFacingAiError(error: unknown) {
 const aiImageMediaTypes = new Set<RuntimePromptImage["mediaType"]>(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const maxAiImages = 4;
 const maxAiImageDataChars = 14 * 1024 * 1024;
+const maxRuntimeRepairTurns = 2;
+
+function runtimeEventData(event: RuntimeEvent) {
+  return event.data && typeof event.data === "object" && !Array.isArray(event.data)
+    ? event.data as Record<string, unknown>
+    : null;
+}
+
+function runtimeToolName(event: RuntimeEvent) {
+  const data = runtimeEventData(event);
+  if (!data) return "";
+  if (typeof data.name === "string") return data.name;
+  const message = data.message && typeof data.message === "object" && !Array.isArray(data.message)
+    ? data.message as Record<string, unknown>
+    : null;
+  return message && typeof message.name === "string" ? message.name : "";
+}
+
+function runtimeToolArguments(event: RuntimeEvent) {
+  const data = runtimeEventData(event);
+  if (!data) return null;
+  const raw = data.arguments ?? data.args;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw !== "string") return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function runtimeEventCallId(event: RuntimeEvent) {
+  const data = runtimeEventData(event);
+  if (!data) return "";
+  if (typeof data.callId === "string") return data.callId;
+  const message = data.message && typeof data.message === "object" && !Array.isArray(data.message)
+    ? data.message as Record<string, unknown>
+    : null;
+  return message && typeof message.callId === "string" ? message.callId : "";
+}
+
+function runtimeToolResultHasError(event: RuntimeEvent) {
+  const data = runtimeEventData(event);
+  if (!data) return false;
+  if (data.error) return true;
+
+  const message = data.message && typeof data.message === "object" && !Array.isArray(data.message)
+    ? data.message as Record<string, unknown>
+    : null;
+  const content = message?.content;
+  return Array.isArray(content) && content.some((item) => (
+    item && typeof item === "object" && !Array.isArray(item) && (item as Record<string, unknown>).isError === true
+  ));
+}
+
+function isPreviewScreenshotCall(event: RuntimeEvent) {
+  if (runtimeToolName(event) !== "inspect_report_preview") return false;
+  if (event.type !== "tool/call") return false;
+  const args = runtimeToolArguments(event);
+  return args?.includeScreenshot === true
+    && (args.screenshotMode === "full" || args.screenshotMode === "element");
+}
+
+function validationIssueText(validation: Awaited<ReturnType<typeof validateReportWorkspace>>) {
+  return validation.issues
+    .slice(0, 12)
+    .map((issue) => `${issue.file || "报表"}: ${issue.message || "校验失败"}`)
+    .join("；");
+}
 
 type ParsedAiRequest = {
   message: string;
@@ -252,7 +325,70 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           send("conversation", nextConversation);
         };
 
-        const runtimeResult = await requestReportAgentFromRuntime({
+        let previewInspectionWithScreenshot = false;
+        const previewScreenshotCallIds = new Set<string>();
+        const onRuntimeSessionReady = (dshSessionId: string) => {
+          disposePreviewClientRef.current?.();
+          disposePreviewClientRef.current = registerReportPreviewClient({
+            dshSessionId,
+            tenantId: session.tenantId,
+            userId: session.userId,
+            reportCode,
+            send,
+          });
+          bindReportAgentSession({
+            dshSessionId,
+            tenantId: session.tenantId,
+            userId: session.userId,
+            reportCode,
+            conversationId: persistedConversationId || null,
+          });
+          return persistConversation(dshSessionId);
+        };
+        const onRuntimeEvent = async (event: RuntimeEvent) => {
+          if (isPreviewScreenshotCall(event)) {
+            const callId = runtimeEventCallId(event);
+            if (callId) previewScreenshotCallIds.add(callId);
+          } else if (event.type === "tool/result") {
+            const callId = runtimeEventCallId(event);
+            if (callId && previewScreenshotCallIds.has(callId) && !runtimeToolResultHasError(event)) {
+              previewInspectionWithScreenshot = true;
+            }
+          }
+          send("runtime", event);
+          const runtimeTitle = runtimeTitleFromEvent(event);
+          if (runtimeTitle) {
+            try {
+              await syncRuntimeConversationTitle(runtimeTitle);
+            } catch (runtimeTitleError) {
+              console.warn("Sync runtime report AI conversation title event failed", {
+                tenantId: session.tenantId,
+                reportCode,
+                conversationId: persistedConversationId,
+                error: runtimeTitleError,
+              });
+            }
+          }
+        };
+        const onRuntimeQuestionEvent = (event: RuntimeQuestionEvent) => {
+          if (event.type === "question/requested") {
+            send("question", {
+              type: "requested",
+              questionRpcId: event.rpcId,
+              sessionId: event.sessionId,
+              questions: event.questions,
+            });
+            return;
+          }
+          send("question", {
+            type: "resolved",
+            questionRpcId: event.questionRpcId,
+            sessionId: event.sessionId,
+            outcome: event.outcome,
+          });
+        };
+
+        let runtimeResult = await requestReportAgentFromRuntime({
           message,
           images,
           attachments: stagedAttachments.files,
@@ -261,58 +397,47 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           sessionId: previousConversation?.dshSessionId,
           tenantId: session.tenantId,
           reportCode,
-          onSessionReady: (dshSessionId) => {
-            disposePreviewClientRef.current?.();
-            disposePreviewClientRef.current = registerReportPreviewClient({
-              dshSessionId,
-              tenantId: session.tenantId,
-              userId: session.userId,
-              reportCode,
-              send,
-            });
-            bindReportAgentSession({
-              dshSessionId,
-              tenantId: session.tenantId,
-              userId: session.userId,
-              reportCode,
-              conversationId: persistedConversationId || null,
-            });
-            return persistConversation(dshSessionId);
-          },
-          onEvent: async (event) => {
-            send("runtime", event);
-            const runtimeTitle = runtimeTitleFromEvent(event);
-            if (runtimeTitle) {
-              try {
-                await syncRuntimeConversationTitle(runtimeTitle);
-              } catch (runtimeTitleError) {
-                console.warn("Sync runtime report AI conversation title event failed", {
-                  tenantId: session.tenantId,
-                  reportCode,
-                  conversationId: persistedConversationId,
-                  error: runtimeTitleError,
-                });
-              }
-            }
-          },
-          onQuestionEvent: (event: RuntimeQuestionEvent) => {
-            if (event.type === "question/requested") {
-              send("question", {
-                type: "requested",
-                questionRpcId: event.rpcId,
-                sessionId: event.sessionId,
-                questions: event.questions,
-              });
-              return;
-            }
-            send("question", {
-              type: "resolved",
-              questionRpcId: event.questionRpcId,
-              sessionId: event.sessionId,
-              outcome: event.outcome,
-            });
-          },
+          onSessionReady: onRuntimeSessionReady,
+          onEvent: onRuntimeEvent,
+          onQuestionEvent: onRuntimeQuestionEvent,
         });
+
+        // Keep the first turn fast, but do not let a visual edit end after a
+        // model-only response or a structurally invalid workspace. The repair
+        // turn reuses the same session so the reference image and prior tool
+        // results remain available to the model.
+        for (let repairTurn = 0; repairTurn < maxRuntimeRepairTurns && !runtimeResult.cancelled; repairTurn += 1) {
+          const workspaceEntries = await getWorkspaceStatusEntries(session.tenantId, reportCode, "working");
+          const { changedFiles, deletedFiles } = splitWorkspaceChanges(workspaceEntries);
+          const hasWorkspaceChanges = changedFiles.length > 0 || deletedFiles.length > 0;
+          if (!hasWorkspaceChanges) break;
+
+          const validation = await validateReportWorkspace(session.tenantId, reportCode);
+          const validationText = validation.valid ? "结构校验已通过" : validationIssueText(validation);
+          const needsVisualReview = images.length > 0 && !previewInspectionWithScreenshot;
+          if (validation.valid && !needsVisualReview) break;
+
+          const repairReasons = [
+            validation.valid ? "结构校验已通过" : `结构校验未通过：${validationText}`,
+            needsVisualReview ? "本轮包含视觉参考图，但还没有拿到当前 working 预览的截图证据" : "",
+          ].filter(Boolean).join("；");
+          runtimeResult = await requestReportAgentFromRuntime({
+            message: [
+              "继续修复刚才的报表任务，不要只解释原因。",
+              repairReasons,
+              "请读取当前 working 的最新文件和已有工具结果，只修复与本轮任务相关的问题；如果是视觉参考任务，必须调用 inspect_report_preview，使用 includeScreenshot=true 和 screenshotMode=full 检查当前 working，并根据结果修复后再次检查。",
+              "完成后再次确认 report.json、page.html、styles.css、app.js、server.js 及其引用关系没有被破坏。",
+            ].join("\n"),
+            workingDirectory,
+            reportName: current.report.name,
+            sessionId: runtimeResult.dshSessionId,
+            tenantId: session.tenantId,
+            reportCode,
+            onSessionReady: onRuntimeSessionReady,
+            onEvent: onRuntimeEvent,
+            onQuestionEvent: onRuntimeQuestionEvent,
+          });
+        }
 
         // The session index is normally persisted from onSessionReady, before the
         // prompt starts. Retry here if that early write hit a transient DB failure.

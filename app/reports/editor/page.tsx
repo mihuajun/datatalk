@@ -1794,6 +1794,8 @@ function toUserFacingAiError(value: unknown, fallback = "本轮执行失败。")
   if (message === "AGENT_RUNTIME_TIMEOUT") return "AI 处理超时，请稍后重试；如果持续超时，请检查 Agent Runtime。";
   if (message === "AGENT_RUNTIME_UNAUTHORIZED") return "Agent Runtime 鉴权已失效，请重启 Agent Runtime 后重试。";
   if (message === "DSH_EVENT_STREAM_FAILED" || message === "DSH_STREAM_FAILED") return "AI 实时连接中断，请稍后重试。";
+  if (message.startsWith("REPORT_AGENT_TOOL_TRANSPORT_FAILED")) return "报表预览工具无法连接 Studio，请确认 Studio 端口和 Runtime 已同步后重试。";
+  if (message === "REPORT_PREVIEW_CLIENT_UNAVAILABLE") return "当前编辑器预览未连接，无法进行截图检查；请保持报表编辑页打开后重试。";
   if (message.includes("UNDECLARED_WORKSPACE_CHANGES")) return "本次 AI 修改未提交，请检查报表工作区后重试。";
   if (message.toLowerCase().includes("does not support image input") || message.toLowerCase().includes("image input is not supported")) {
     return "当前模型不支持图片输入，请在 Agent Runtime 模型配置中选择支持视觉输入的模型。";
@@ -2807,7 +2809,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const activeConversationIdRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
   const [zoom, setZoom] = useState(100);
-  const [webAutoFit, setWebAutoFit] = useState(false);
+  const [webAutoFit, setWebAutoFit] = useState(true);
   const [fitRequestKey, setFitRequestKey] = useState(0);
   const [propertiesVisible, setPropertiesVisible] = useState(false);
   const [filterManifest, setFilterManifest] = useState<ReportFilterManifest | null>(null);

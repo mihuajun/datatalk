@@ -7,9 +7,21 @@ export type ReportSelectedElement = {
 
 const elementContextMarker = "当前选中的报表元素（定位信息，请核对最新 working 页面）：\n";
 const attachmentContextMarker = "\n\n本轮对话包含以下临时附件：";
+const visualReferenceContextMarker = "\n\n本轮对话包含以下视觉参考图片：";
+
+const runtimeContextMarkers = [attachmentContextMarker, visualReferenceContextMarker];
 
 function normalizeLineEndings(value: string) {
   return value.replace(/\r\n?/g, "\n");
+}
+
+function stripVisualReferenceContext(value: string) {
+  const visualStart = value.indexOf(visualReferenceContextMarker);
+  if (visualStart < 0) return value;
+
+  const attachmentStart = value.indexOf(attachmentContextMarker, visualStart + visualReferenceContextMarker.length);
+  return value.slice(0, visualStart).trimEnd()
+    + (attachmentStart < 0 ? "" : value.slice(attachmentStart));
 }
 
 export function withSelectedElementContext(message: string, selected: ReportSelectedElement[]) {
@@ -20,13 +32,16 @@ export function withSelectedElementContext(message: string, selected: ReportSele
 export function readSelectedElementContext(content: string): { message: string; selected: ReportSelectedElement[] } {
   const normalizedContent = normalizeLineEndings(content);
   const markerIndex = normalizedContent.lastIndexOf(elementContextMarker);
-  if (markerIndex < 0) return { message: normalizedContent, selected: [] };
+  if (markerIndex < 0) return { message: stripVisualReferenceContext(normalizedContent), selected: [] };
   const contextStart = markerIndex + elementContextMarker.length;
-  const attachmentStart = normalizedContent.indexOf(attachmentContextMarker, contextStart);
-  const visibleMessage = normalizedContent.slice(0, markerIndex).trimEnd()
-    + (attachmentStart < 0 ? "" : normalizedContent.slice(attachmentStart));
+  const contextEnd = runtimeContextMarkers
+    .map((marker) => normalizedContent.indexOf(marker, contextStart))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  const visibleMessage = stripVisualReferenceContext(normalizedContent.slice(0, markerIndex).trimEnd()
+    + (contextEnd === undefined ? "" : normalizedContent.slice(contextEnd)));
   try {
-    const value: unknown = JSON.parse(normalizedContent.slice(contextStart, attachmentStart < 0 ? undefined : attachmentStart).trim());
+    const value: unknown = JSON.parse(normalizedContent.slice(contextStart, contextEnd === undefined ? undefined : contextEnd).trim());
     const targets: unknown[] = Array.isArray(value) ? value : [value];
     if (!targets.length || targets.some((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return true;
@@ -45,6 +60,6 @@ export function readSelectedElementContext(content: string): { message: string; 
 export function runtimeMessageMatchesPending(content: string, message: string) {
   const visibleContent = normalizeLineEndings(content).trim();
   const normalizedMessage = normalizeLineEndings(message).trim();
-  if (!normalizedMessage) return !visibleContent || visibleContent.startsWith(attachmentContextMarker.trim());
-  return visibleContent === normalizedMessage || visibleContent.startsWith(`${normalizedMessage}${attachmentContextMarker}`);
+  if (!normalizedMessage) return !visibleContent || runtimeContextMarkers.some((marker) => visibleContent.startsWith(marker.trim()));
+  return visibleContent === normalizedMessage || runtimeContextMarkers.some((marker) => visibleContent.startsWith(`${normalizedMessage}${marker}`));
 }

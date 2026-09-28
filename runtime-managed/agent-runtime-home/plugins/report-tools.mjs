@@ -51,15 +51,21 @@ async function callTool(tool, args, exec) {
     throw new Error("REPORT_AGENT_TOOL_SESSION_NOT_FOUND");
   }
 
-  const response = await fetch(`${resolveBaseUrl()}/api/report-agent-tools`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-report-agent-dsh-session-id": dshSessionId,
-    },
-    body: JSON.stringify({ tool, args }),
-    signal: exec.signal,
-  });
+  let response;
+  try {
+    response = await fetch(`${resolveBaseUrl()}/api/report-agent-tools`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-report-agent-dsh-session-id": dshSessionId,
+      },
+      body: JSON.stringify({ tool, args }),
+      signal: exec.signal,
+    });
+  } catch (error) {
+    const detail = error instanceof Error && error.message.trim() ? `: ${error.message.trim()}` : "";
+    throw new Error(`REPORT_AGENT_TOOL_TRANSPORT_FAILED${detail}`);
+  }
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {

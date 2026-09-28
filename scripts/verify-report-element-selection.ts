@@ -134,6 +134,10 @@ function verifyChatContext() {
   assert.deepEqual(readSelectedElementContext(runtimePrompt), { message: "这个指标太小", selected: [selected, second] });
   assert.equal(runtimeMessageMatchesPending(runtimePrompt, prompt), true);
   assert.equal(runtimeMessageMatchesPending(`${runtimePrompt}\r\n\r\n本轮对话包含以下临时附件：\r\n- 参考图片.png`, prompt), true);
+  const visualContext = `${prompt}\n\n本轮对话包含以下视觉参考图片：\n共 1 张。图片是本轮报表任务的视觉参考。`;
+  assert.equal(runtimeMessageMatchesPending(visualContext, prompt), true);
+  assert.deepEqual(readSelectedElementContext(visualContext), { message: "这个指标太小", selected: [selected, second] });
+  assert.deepEqual(readSelectedElementContext("普通消息\n\n本轮对话包含以下视觉参考图片：\n共 1 张"), { message: "普通消息", selected: [] });
   assert.equal(runtimeMessageMatchesPending("另一个请求", prompt), false);
   assert.deepEqual(readSelectedElementContext(withSelectedElementContext("", [selected])), { message: "", selected: [selected] });
   const withAttachment = `${prompt}\n\n本轮对话包含以下临时附件：\n- 参考图片.png`;
