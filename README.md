@@ -6,8 +6,6 @@
 
 DataTalk Studio brings data sources, metrics, queries, visualizations, and report editing together in one workspace. Users can create and modify reports with natural language, or use the visual editor, data source management, and metric knowledge tools when professional control is needed.
 
-The project is under active development. Pages, APIs, data models, and Agent tool interfaces may change. Do not use it directly in production without completing security hardening, permission reviews, and backup planning.
-
 ## Website and Enterprise Services
 
 DataTalk Studio is the open-source report workspace from DataTalk. Visit the website to explore public reports and templates before trying or extending Studio:
@@ -271,7 +269,6 @@ npm run test:image-gen
 - Replace local default accounts and auto-generated development secrets before production use.
 - In multi-instance deployments, share stable `AUTH_SESSION_SECRET`, `PUBLIC_LINK_SECRET`, and `REPORT_AGENT_TOOL_SECRET` values across instances.
 - When Agent tools can access data, configure least privilege, query auditing, rollback behavior, and human confirmation boundaries.
-- The project is under active development. Complete security review, dependency auditing, backup recovery drills, and privacy compliance review before production use.
 
 ## License
 
