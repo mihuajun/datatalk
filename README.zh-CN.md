@@ -261,15 +261,6 @@ npm run test:metric-knowledge
 npm run test:image-gen
 ```
 
-## 数据安全与生产注意事项
-
-- 不要提交 `config/config.local.yaml`、`.env`、数据库文件、日志、运行时状态、私钥或模型凭据。
-- 不要使用真实客户、患者、联系方式或其他敏感数据作为公开示例。
-- 外部数据源建议使用只读账号，并根据租户和角色限制可访问的表、字段和操作。
-- 生产环境必须替换本地默认账号和自动生成的开发密钥。
-- 多实例部署时，需要在实例间共享稳定的 `AUTH_SESSION_SECRET`、`PUBLIC_LINK_SECRET` 和 `REPORT_AGENT_TOOL_SECRET`。
-- Agent 工具具有数据访问能力时，应配置最小权限、查询审计、失败回滚和人工确认边界。
-
 ## 开源协议
 
 DataTalk Studio 使用 [Apache License 2.0](LICENSE)。第三方依赖和 `skills/` 下的扩展可能使用各自的许可证，请在分发前检查对应的许可证和归属声明。

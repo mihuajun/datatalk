@@ -261,15 +261,6 @@ npm run test:metric-knowledge
 npm run test:image-gen
 ```
 
-## Data Security and Production Notes
-
-- Do not commit `config/config.local.yaml`, `.env` files, database files, logs, runtime state, private keys, or model credentials.
-- Do not use real customer, patient, contact, or other sensitive data in public examples.
-- Prefer read-only accounts for external data sources and restrict accessible tables, fields, and operations by tenant and role.
-- Replace local default accounts and auto-generated development secrets before production use.
-- In multi-instance deployments, share stable `AUTH_SESSION_SECRET`, `PUBLIC_LINK_SECRET`, and `REPORT_AGENT_TOOL_SECRET` values across instances.
-- When Agent tools can access data, configure least privilege, query auditing, rollback behavior, and human confirmation boundaries.
-
 ## License
 
 DataTalk Studio is released under the [Apache License 2.0](LICENSE). Extensions under `skills/` and third-party dependencies may have their own licenses; review the relevant notices before redistribution.
