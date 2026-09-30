@@ -144,13 +144,18 @@ type SentAiImagePreview = {
   previews: string[];
 };
 
+type PendingAiMessageStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
 type PendingAiMessage = {
   id: string;
   message: string;
   previews: string[];
   files?: string[];
   time: number;
-  queued: boolean;
+  status: PendingAiMessageStatus;
+  error?: string;
+  imageDrafts?: AiImageDraft[];
+  fileDrafts?: AiFileDraft[];
 };
 
 type PendingQuestionOption = {
@@ -841,30 +846,59 @@ function latestLine(text: string) {
 
 function ReasoningDisclosure({ text, streaming }: { text: string; streaming: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const userToggledRef = useRef(false);
+  const prevStreamingRef = useRef(false);
   const detailsId = useId();
   const summary = (streaming ? latestLine(text) : firstLine(text)).trim() || (streaming ? "正在思考..." : "思考过程");
+
+  useEffect(() => {
+    if (prevStreamingRef.current && !streaming) {
+      if (!userToggledRef.current) setExpanded(false);
+      userToggledRef.current = false;
+    }
+    if (streaming && !prevStreamingRef.current && !userToggledRef.current) {
+      setExpanded(true);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
 
   return (
     <div className="min-w-0 text-[13px] leading-6 text-[#667085]">
       <button
         type="button"
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => {
+          userToggledRef.current = true;
+          setExpanded((current) => !current);
+        }}
         className="group/reasoning relative flex h-6 w-full min-w-0 items-center overflow-hidden text-left outline-none"
         aria-expanded={expanded}
         aria-controls={detailsId}
       >
-        <span className="relative mr-1.5 flex h-4 w-4 shrink-0 items-center justify-center text-[#98A2B3]">
+        <span className={`relative mr-1.5 flex h-4 w-4 shrink-0 items-center justify-center text-[#98A2B3] ${streaming && !expanded ? "animate-pulse" : ""}`}>
           <Sparkles className={`h-3.5 w-3.5 transition-opacity ${expanded ? "opacity-0" : "group-hover/reasoning:opacity-0"}`} />
           <ChevronRight className={`absolute h-3.5 w-3.5 transition-all ${expanded ? "opacity-0" : "opacity-0 group-hover/reasoning:opacity-100"}`} />
           <ChevronDown className={`absolute h-3.5 w-3.5 transition-opacity ${expanded ? "opacity-100" : "opacity-0"}`} />
         </span>
         <span className="shrink-0 text-[#526174]">思考</span>
-        {!expanded ? <>
-          <span className="mx-2 inline-block h-[2px] w-[2px] shrink-0 rounded-full bg-[#B9C8DC] align-middle" />
-          <span className="min-w-0 flex-1 truncate text-[#667085]">{summary}</span>
-        </> : null}
+        {!expanded ? (
+          <>
+            <span className="mx-2 inline-block h-[2px] w-[2px] shrink-0 rounded-full bg-[#B9C8DC] align-middle" />
+            <span className={`min-w-0 flex-1 truncate ${streaming ? "animate-pulse text-[#2167E8]" : "text-[#667085]"}`}>{summary}</span>
+          </>
+        ) : null}
       </button>
-      {expanded ? <div id={detailsId} className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words pl-[22px] pr-1 text-[12px] leading-5 text-[#667085]">{text}</div> : null}
+      {expanded ? (
+        <div id={detailsId} className="mt-1 max-h-80 overflow-y-auto rounded-md border border-[#E4E9F2] bg-[#F7F9FC] px-3 py-2.5 text-[12px] leading-5 text-[#667085]">
+          {renderAssistantMarkdown(text)}
+          {streaming ? (
+            <div className="mt-2 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2167E8]" style={{ animationDelay: "0ms" }} />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2167E8]" style={{ animationDelay: "150ms" }} />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2167E8]" style={{ animationDelay: "300ms" }} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1234,6 +1268,8 @@ function AiChatPanel({
   onClearSelectedElements,
   onSubmit,
   onStop,
+  onCancelPendingMessage,
+  onRetryPendingMessage,
   onSubmitQuestion,
   onCancelQuestion,
   conversations,
@@ -1264,6 +1300,8 @@ function AiChatPanel({
   onClearSelectedElements: () => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   onStop: () => void;
+  onCancelPendingMessage: (messageId: string) => void;
+  onRetryPendingMessage: (messageId: string) => void;
   onSubmitQuestion: (answer: PendingQuestionAnswer) => void;
   onCancelQuestion: () => void;
   conversations: AiConversation[];
@@ -1477,13 +1515,19 @@ function AiChatPanel({
         ) : (
           <>
             {error ? <div role="alert" className="mb-2 break-words rounded-md border border-[#F5D4CC] bg-[#FFF8F6] px-2.5 py-2 text-[11px] leading-5 text-[#B42318]">{error}</div> : null}
-            {pendingMessages.some((pendingMessage) => pendingMessage.queued) ? <div className="mb-2 space-y-1.5" aria-label="待发送消息">
-              {pendingMessages.filter((pendingMessage) => pendingMessage.queued).map((pendingMessage) => {
+            {pendingMessages.some((pendingMessage) => pendingMessage.status === "queued" || pendingMessage.status === "running" || pendingMessage.status === "failed") ? <div className="mb-2 space-y-1.5" aria-label="排队与运行中的消息">
+              {pendingMessages.filter((pendingMessage) => pendingMessage.status === "queued" || pendingMessage.status === "running" || pendingMessage.status === "failed").map((pendingMessage, index, list) => {
                 const visible = readSelectedElementContext(pendingMessage.message);
-                return <div key={pendingMessage.id} className="flex min-w-0 items-start gap-2 rounded-md border border-[#DDE5F0] bg-[#F7F9FC] px-2.5 py-2 text-[11px] text-[#526174]">
-                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-[#2167E8]"><LoaderCircle className="h-3 w-3 animate-spin" /></span>
-                  <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{[visible.message || "附件消息", visible.selected.length ? `目标：${visible.selected.slice(0, 2).map((element) => element.text || element.selector).join("、")}${visible.selected.length > 2 ? ` 等 ${visible.selected.length} 个元素` : ""}` : "", pendingMessage.files?.length ? `附件：${pendingMessage.files.join("、")}` : ""].filter(Boolean).join("\n")}</span>
-                  <span className="shrink-0 text-[10px] text-[#98A2B3]">待发送</span>
+                const ahead = list.slice(0, index).filter((candidate) => candidate.status === "queued" || candidate.status === "running").length;
+                const isQueued = pendingMessage.status === "queued";
+                const isRunning = pendingMessage.status === "running";
+                const isFailed = pendingMessage.status === "failed";
+                return <div key={pendingMessage.id} className={`flex min-w-0 items-start gap-2 rounded-md border px-2.5 py-2 text-[11px] ${isFailed ? "border-[#F5D4CC] bg-[#FFF8F6] text-[#B42318]" : "border-[#DDE5F0] bg-[#F7F9FC] text-[#526174]"}`}>
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center text-[#2167E8]">{isRunning ? <LoaderCircle className="h-3 w-3 animate-spin" /> : isFailed ? <X className="h-3 w-3" /> : <LoaderCircle className="h-3 w-3" />}</span>
+                  <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{[visible.message || "附件消息", visible.selected.length ? `目标：${visible.selected.slice(0, 2).map((element) => element.text || element.selector).join("、")}${visible.selected.length > 2 ? ` 等 ${visible.selected.length} 个元素` : ""}` : "", pendingMessage.files?.length ? `附件：${pendingMessage.files.join("、")}` : ""].filter(Boolean).join("\n")}{isFailed && pendingMessage.error ? `\n${pendingMessage.error}` : ""}</span>
+                  <span className="shrink-0 text-[10px] text-[#98A2B3]">{isQueued ? `排队中${ahead ? `·前 ${ahead}` : ""}` : isRunning ? "运行中" : "失败"}</span>
+                  {isQueued || isRunning ? <button type="button" onClick={() => onCancelPendingMessage(pendingMessage.id)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#98A2B3] hover:bg-[#F3F6FA] hover:text-[#B42318]" aria-label="取消该消息" title="取消"><X className="h-3 w-3" /></button> : null}
+                  {isFailed ? <button type="button" onClick={() => onRetryPendingMessage(pendingMessage.id)} className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-[#2167E8] hover:bg-[#EDF3FF]" aria-label="重试该消息" title="重试"><RefreshCw className="h-3 w-3" />重试</button> : null}
                 </div>})}
             </div> : null}
             <div className="mb-2 flex items-center gap-1.5 text-[10px] text-[#98A2B3]"><MessageCircle className="h-3.5 w-3.5" />询问或修改这份报表</div>
@@ -1506,7 +1550,8 @@ function AiChatPanel({
                 </div>
                 {attachmentSummary ? <span className="min-w-0 flex-1 truncate text-[10px] text-[#98A2B3]">{attachmentSummary}待发送</span> : <span className="flex-1" />}
                 <div className="flex shrink-0 items-center gap-1">
-                  {streaming ? <button type="button" onClick={onStop} disabled={stopping} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#F5D4CC] bg-[#FFF8F6] text-[#B42318] hover:bg-[#FDECE8] disabled:cursor-wait disabled:opacity-50" aria-label="停止 AI 任务" title="停止 AI 任务"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0} className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2167E8] text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>}
+                  <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0} className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2167E8] text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>
+                  {streaming ? <button type="button" onClick={onStop} disabled={stopping} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#F5D4CC] bg-[#FFF8F6] text-[#B42318] hover:bg-[#FDECE8] disabled:cursor-wait disabled:opacity-50" aria-label="停止 AI 任务" title="停止 AI 任务"><Square className="h-3.5 w-3.5 fill-current" /></button> : null}
                 </div>
               </div>
             </form>
@@ -2236,7 +2281,8 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
   }
 
   for (const pendingMessage of pendingMessages) {
-    if (pendingMessage.queued || matchedPendingMessageIds.has(pendingMessage.id)) continue;
+    if (matchedPendingMessageIds.has(pendingMessage.id)) continue;
+    if (pendingMessage.status === "queued" || pendingMessage.status === "cancelled") continue;
     const visible = readSelectedElementContext(pendingMessage.message);
     timeline.push({
       id: `optimistic-user-${pendingMessage.id}`,
@@ -2808,6 +2854,18 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const activeAiRequestCountRef = useRef(0);
   const activeConversationIdRef = useRef<string | null>(null);
   const stopRequestedRef = useRef(false);
+  const pendingMessagesRef = useRef<PendingAiMessage[]>([]);
+  const pendingAbortRef = useRef<AbortController | null>(null);
+  const currentDrainIdRef = useRef<string | null>(null);
+
+  function commitPendingMessages(next: PendingAiMessage[]) {
+    pendingMessagesRef.current = next;
+    setPendingMessages(next);
+  }
+
+  function updatePendingMessages(updater: (current: PendingAiMessage[]) => PendingAiMessage[]) {
+    commitPendingMessages(updater(pendingMessagesRef.current));
+  }
   const [zoom, setZoom] = useState(100);
   const [webAutoFit, setWebAutoFit] = useState(true);
   const [fitRequestKey, setFitRequestKey] = useState(0);
@@ -2887,7 +2945,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     if (event.type === "user/message" && event.surfaceOp === "append") {
       const content = textOfBlocks(event.data?.content) || textOfBlocks(event.data?.message?.content);
       const normalizedContent = content.trim();
-      setPendingMessages((current) => {
+      updatePendingMessages((current) => {
         const pendingIndex = current.findIndex((candidate) => runtimeMessageMatchesPending(normalizedContent, candidate.message));
         if (pendingIndex < 0) return current;
         return current.filter((_, index) => index !== pendingIndex);
@@ -3107,7 +3165,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     rememberPendingQuestion(result.pendingQuestion || null);
     setQuestionSubmitting(false);
     setQuestionError("");
-    setPendingMessages([]);
+    commitPendingMessages([]);
     setSentImagePreviews([]);
     startConversationRecovery(code, result.conversation.id, requestVersion, result.runtimeRunning === true);
   }
@@ -3175,7 +3233,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     activeConversationIdRef.current = null;
     setRuntimeEvents([]);
     resetQuestionState();
-    setPendingMessages([]);
+    commitPendingMessages([]);
     setChatInput("");
     setChatImages([]);
     setChatFiles([]);
@@ -3727,7 +3785,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     }
   }
 
-  async function streamAiEdit(message: string, conversationId: string | null, images: AiImageDraft[], files: AiFileDraft[]) {
+  async function streamAiEdit(message: string, conversationId: string | null, images: AiImageDraft[], files: AiFileDraft[], signal?: AbortSignal) {
     if (!normalizedReportCode || !lockToken) throw new Error("编辑锁已失效，请退出后重新进入");
     const formData = new FormData();
     formData.set("message", message);
@@ -3739,6 +3797,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       method: "POST",
       headers: { Accept: "text/event-stream" },
       body: formData,
+      signal,
     });
     if (!response.ok) {
       const result = await response.json().catch(() => ({})) as { message?: string };
@@ -3913,6 +3972,8 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
   function stopAiTask() {
     if (aiStopping) return;
+    updatePendingMessages((current) => current.map((candidate) => candidate.status === "queued" ? { ...candidate, status: "cancelled" } : candidate));
+    pendingAbortRef.current?.abort();
     const conversationId = activeConversationIdRef.current || activeConversationId;
     if (!conversationId) {
       stopRequestedRef.current = true;
@@ -3974,6 +4035,72 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     }
   }
 
+  async function drainPendingQueue() {
+    if (activeAiRequestCountRef.current > 0) return;
+    const next = pendingMessagesRef.current.find((candidate) => candidate.status === "queued");
+    if (!next) {
+      if (!conversationRecoveryAbortRef.current) setAiStreaming(false);
+      return;
+    }
+    const controller = new AbortController();
+    pendingAbortRef.current = controller;
+    currentDrainIdRef.current = next.id;
+    activeAiRequestCountRef.current += 1;
+    setAiStreaming(true);
+    updatePendingMessages((current) => current.map((candidate) => candidate.id === next.id ? { ...candidate, status: "running" } : candidate));
+    const conversationId = activeConversationIdRef.current || activeConversationId;
+    const images = next.imageDrafts || [];
+    const files = next.fileDrafts || [];
+    try {
+      await streamAiEdit(next.message, conversationId, images, files, controller.signal);
+      updatePendingMessages((current) => current.map((candidate) => candidate.id === next.id ? { ...candidate, status: "done" } : candidate));
+    } catch (chatError) {
+      const aborted = controller.signal.aborted || (chatError instanceof Error && (chatError.name === "AbortError" || chatError.message === "AI_STREAM_ABORTED"));
+      if (aborted) {
+        updatePendingMessages((current) => current.map((candidate) => candidate.id === next.id ? { ...candidate, status: "cancelled" } : candidate));
+      } else {
+        const errorMessage = toUserFacingAiError(chatError instanceof Error ? chatError.message : "AI 报表处理失败", "AI 报表处理失败");
+        if (!(chatError instanceof Error && (chatError as AiStreamError).runtimeEventReported)) {
+          appendRuntimeEvent({ type: "turn/end", data: { reason: { kind: "error", error: { message: errorMessage } } }, time: Date.now() });
+        }
+        updatePendingMessages((current) => current.map((candidate) => candidate.id === next.id ? { ...candidate, status: "failed", error: errorMessage } : candidate));
+        setSentImagePreviews((current) => current.filter((sentImage) => sentImage.id !== next.id));
+        setWorkingStatus("AI 任务已终止");
+      }
+    } finally {
+      activeAiRequestCountRef.current = Math.max(0, activeAiRequestCountRef.current - 1);
+      pendingAbortRef.current = null;
+      currentDrainIdRef.current = null;
+      void drainPendingQueue();
+    }
+  }
+
+  function cancelPendingMessage(messageId: string) {
+    const target = pendingMessagesRef.current.find((candidate) => candidate.id === messageId);
+    if (!target) return;
+    if (target.status === "queued") {
+      updatePendingMessages((current) => current.map((candidate) => candidate.id === messageId ? { ...candidate, status: "cancelled" } : candidate));
+      setSentImagePreviews((current) => current.filter((sentImage) => sentImage.id !== messageId));
+      return;
+    }
+    if (target.status === "running") {
+      pendingAbortRef.current?.abort();
+      const conversationId = activeConversationIdRef.current || activeConversationId;
+      if (conversationId) void cancelAiTask(conversationId);
+    }
+  }
+
+  function retryPendingMessage(messageId: string) {
+    let didEnqueue = false;
+    updatePendingMessages((current) => current.map((candidate) => {
+      if (candidate.id !== messageId) return candidate;
+      if (candidate.status !== "failed" && candidate.status !== "cancelled") return candidate;
+      didEnqueue = true;
+      return { ...candidate, status: "queued", error: undefined };
+    }));
+    if (didEnqueue) void drainPendingQueue();
+  }
+
   async function submitChat(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = chatInput.trim();
@@ -3987,52 +4114,29 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       return;
     }
     const prompt = withSelectedElementContext(message, targets);
-    const queued = activeAiRequestCountRef.current > 0
-      || Boolean(conversationRecoveryAbortRef.current)
-      || aiStreaming;
     stopConversationRecovery();
     conversationRequestVersionRef.current += 1;
     setConversationLoading(false);
-    const submittedConversationId = activeConversationIdRef.current || activeConversationId;
     stopRequestedRef.current = false;
     const pendingId = `pending-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setPendingMessages((current) => [...current, {
+    const pendingMessage: PendingAiMessage = {
       id: pendingId,
       message: prompt,
       previews: images.map((image) => image.previewUrl),
       files: files.map((attachment) => attachment.file.name),
       time: Date.now(),
-      queued,
-    }]);
+      status: "queued",
+      imageDrafts: images,
+      fileDrafts: files,
+    };
+    updatePendingMessages((current) => [...current, pendingMessage]);
     setSentImagePreviews((current) => [...current, { id: pendingId, message: prompt, previews: images.map((image) => image.previewUrl) }]);
     setChatInput("");
     setChatImages([]);
     setChatFiles([]);
     setSelectedElements([]);
-    activeAiRequestCountRef.current += 1;
-    setAiStreaming(true);
     setError("");
-    try {
-      await streamAiEdit(prompt, submittedConversationId, images, files);
-    } catch (chatError) {
-      const errorMessage = toUserFacingAiError(chatError instanceof Error ? chatError.message : "AI 报表处理失败", "AI 报表处理失败");
-      if (!(chatError instanceof Error && (chatError as AiStreamError).runtimeEventReported)) {
-        appendRuntimeEvent({ type: "turn/end", data: { reason: { kind: "error", error: { message: errorMessage } } }, time: Date.now() });
-      }
-      setWorkingStatus("AI 任务已终止");
-      setError(errorMessage);
-      setPendingMessages((current) => current.filter((pendingMessage) => pendingMessage.id !== pendingId));
-      setSentImagePreviews((current) => current.filter((sentImage) => sentImage.id !== pendingId));
-      if (targets.length && targets.every((target) => target.workspaceFingerprint === workspaceFingerprintRef.current)) {
-        setSelectedElements((current) => {
-          const selectedSelectors = new Set(current.map((element) => element.selector));
-          return [...targets.filter((target) => !selectedSelectors.has(target.selector)), ...current];
-        });
-      }
-    } finally {
-      activeAiRequestCountRef.current = Math.max(0, activeAiRequestCountRef.current - 1);
-      if (activeAiRequestCountRef.current === 0 && !conversationRecoveryAbortRef.current) setAiStreaming(false);
-    }
+    void drainPendingQueue();
   }
 
   function startAiPanelResize(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -4518,7 +4622,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
       <div className={`report-editor-grid relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${effectiveWebFiles["page.html"] ? "report-web-mode" : ""} ${aiPanelVisible ? "" : "ai-panel-hidden"}`} style={{ "--report-editor-ai-width": aiPanelVisible ? `${aiPanelWidth}px` : "0px", "--report-editor-properties-width": propertiesVisible ? "276px" : "0px" } as CSSProperties}>
         {publicLinkPanelVisible ? <button type="button" onPointerDown={() => setPublicLinkPanelVisible(false)} className="absolute inset-0 z-40 cursor-default border-0 bg-transparent p-0" aria-label="关闭公共链接设置" /> : null}
-        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden"><AiChatPanel reportCode={normalizedReportCode} timeline={timeline} streaming={aiStreaming} pendingMessages={pendingMessages} pendingQuestion={pendingQuestion} questionSubmitting={questionSubmitting} questionError={questionError} error={error} stopping={aiStopping} chatInput={chatInput} chatImages={chatImages} chatFiles={chatFiles} selectedElements={selectedElements} onInputChange={setChatInput} onPaste={handleAiAttachmentPaste} onPickAttachments={handleAiAttachmentPicker} onRemoveImage={(id) => setChatImages((current) => current.filter((image) => image.id !== id))} onRemoveFile={(id) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id))} onRemoveSelectedElement={(selector) => setSelectedElements((current) => current.filter((element) => element.selector !== selector))} onClearSelectedElements={() => setSelectedElements([])} onSubmit={submitChat} onStop={stopAiTask} onSubmitQuestion={(answer) => void respondPendingQuestion(answer)} onCancelQuestion={() => void cancelPendingQuestion()} conversations={conversations} activeConversationId={activeConversationId} conversationLoading={conversationLoading} onSelectConversation={(conversationId) => void selectConversation(conversationId)} onNewConversation={startNewConversation} /><button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button></div>
+        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden"><AiChatPanel reportCode={normalizedReportCode} timeline={timeline} streaming={aiStreaming} pendingMessages={pendingMessages} pendingQuestion={pendingQuestion} questionSubmitting={questionSubmitting} questionError={questionError} error={error} stopping={aiStopping} chatInput={chatInput} chatImages={chatImages} chatFiles={chatFiles} selectedElements={selectedElements} onInputChange={setChatInput} onPaste={handleAiAttachmentPaste} onPickAttachments={handleAiAttachmentPicker} onRemoveImage={(id) => setChatImages((current) => current.filter((image) => image.id !== id))} onRemoveFile={(id) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id))} onRemoveSelectedElement={(selector) => setSelectedElements((current) => current.filter((element) => element.selector !== selector))} onClearSelectedElements={() => setSelectedElements([])} onSubmit={submitChat} onStop={stopAiTask} onCancelPendingMessage={cancelPendingMessage} onRetryPendingMessage={retryPendingMessage} onSubmitQuestion={(answer) => void respondPendingQuestion(answer)} onCancelQuestion={() => void cancelPendingQuestion()} conversations={conversations} activeConversationId={activeConversationId} conversationLoading={conversationLoading} onSelectConversation={(conversationId) => void selectConversation(conversationId)} onNewConversation={startNewConversation} /><button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button></div>
 
         {effectiveWebFiles["page.html"] && normalizedReportCode ? <div className="report-web-overlay z-10 overflow-hidden bg-[#E9EEF4]"><WebReportCanvas reportCode={normalizedReportCode} files={effectiveWebFiles} workspaceFingerprint={workspaceFingerprint} filters={editorFilterValues} urlFilters={editorFilterResolution.urlValues} defaults={editorFilterResolution.defaults} zoom={zoom} autoFit={webAutoFit} fitRequestKey={fitRequestKey} refreshKey={contentRefreshKey} elementPickerEnabled={elementPickerEnabled} selectedElementSelectors={selectedElementSelectors} onElementPickerChange={setElementPickerEnabled} onElementSelected={handleElementSelected} onLoad={() => { previewRefreshPendingRef.current = false; setContentRefreshing(false); }} onZoomChange={handleCanvasZoomChange} onAutoFitZoomChange={handleAutoFitZoomChange} onFrameReady={(frame) => { webPreviewFrameRef.current = frame; if (frame) previewRefreshPendingRef.current = false; }} onFocusControllerChange={handleCanvasFocusControllerChange} /></div> : null}
 
