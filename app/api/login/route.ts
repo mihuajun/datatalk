@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2/promise";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { encodeAuthSession, normalizeUserRole } from "@/lib/server/auth-session";
+import { authCookieOptions, encodeAuthSession, normalizeUserRole } from "@/lib/server/auth-session";
 import { getDbPool } from "@/lib/server/mysql";
 import { hashPassword } from "@/lib/server/password";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
@@ -103,14 +103,7 @@ export async function POST(request: Request) {
       username: user.username,
       name: pickName(user),
       role: normalizeUserRole(user.role),
-    }), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-      ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}),
-    });
+    }), authCookieOptions());
 
     return response;
   } catch (error) {

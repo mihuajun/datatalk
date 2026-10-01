@@ -30,15 +30,58 @@ export type RuntimePromptAttachment = {
   size: number;
 };
 
+export type RuntimeDataContextTable = {
+  name: string;
+  comment?: string;
+  columns?: Array<{
+    name: string;
+    dataType?: string;
+    nullable?: boolean;
+    comment?: string;
+  }>;
+};
+
+export type RuntimePromptDataContext = {
+  dataSourceName: string;
+  dataSourceType: string;
+  tables: RuntimeDataContextTable[];
+};
+
+export type RuntimePromptTheme = {
+  id: string;
+  name: string;
+  prompt: string;
+};
+
 const runtimeAttachmentContextMarker = "本轮对话包含以下临时附件：";
 const runtimeVisualReferenceContextMarker = "本轮对话包含以下视觉参考图片：";
+const runtimeDataContextMarker = "本轮对话包含以下数据源上下文：";
+const runtimeThemeContextMarker = "本报表的页面风格要求：";
+const runtimeThemeSwitchableIds = "default / dark-business / fresh-minimal / tech-blue / custom";
 
 function buildRuntimePromptMessage(
   message: string,
   attachments: RuntimePromptAttachment[] | undefined,
   imageCount = 0,
+  dataContext?: RuntimePromptDataContext,
+  theme?: RuntimePromptTheme,
 ) {
   const context: string[] = [];
+
+  if (theme?.prompt) {
+    context.push([
+      runtimeThemeContextMarker,
+      theme.prompt,
+      `当前风格 id 为 "${theme.id}"（${theme.name}），记录在 report.json 的 theme 字段。后续所有样式与图表配色都要与该风格保持一致。`,
+      `如果用户要求切换风格（例如"换成暗黑风格""改成科技蓝"），先把 page.html、styles.css、app.js 的视觉样式整体调整到新风格，然后更新 report.json 的 theme 字段：预置风格使用 {"id": "<风格id>"}（可选值：${runtimeThemeSwitchableIds}）；用户描述了自定义风格时使用 {"id": "custom", "custom": "<风格描述>"}。`,
+    ].join("\n"));
+  } else {
+    context.push([
+      runtimeThemeContextMarker,
+      "report.json 未指定风格（theme 字段缺失或为 default），使用简洁现代的白底商务风格。",
+      `如果用户要求切换风格（例如"换成暗黑风格""改成科技蓝"），先把 page.html、styles.css、app.js 的视觉样式整体调整到新风格，然后更新 report.json 的 theme 字段：预置风格使用 {"id": "<风格id>"}（可选值：${runtimeThemeSwitchableIds}）；用户描述了自定义风格时使用 {"id": "custom", "custom": "<风格描述>"}。`,
+    ].join("\n"));
+  }
 
   if (imageCount > 0) {
     context.push([
@@ -47,6 +90,30 @@ function buildRuntimePromptMessage(
       "如果用户要求生成或修改报表，先查看图片并提炼可执行的设计规格：画布比例、信息层级、区块顺序、网格列数、主要尺寸、留白、颜色、字体层级、图表类型、标签密度和视觉重点。",
       "然后检查当前 working 报表，把参考图中的视觉意图映射为真实的 page.html、styles.css、app.js 和必要的数据契约；不要把截图当作页面背景来掩盖缺失的真实组件，也不要凭截图臆造业务数据。",
       "完成修改后必须检查当前 working 预览的完整截图并修复明显的布局、裁切、重叠、可读性或图片加载问题。",
+    ].join("\n"));
+  }
+
+  if (dataContext?.tables.length) {
+    const tableBlocks = dataContext.tables.map((table) => {
+      const columns = Array.isArray(table.columns) ? table.columns : [];
+      const columnLines = columns.length
+        ? columns.map((column) => {
+          const fragments: string[] = [column.name];
+          if (column.dataType) fragments.push(column.dataType);
+          if (column.nullable) fragments.push("可空");
+          if (column.comment) fragments.push(`// ${column.comment}`);
+          return `  - ${fragments.filter(Boolean).join(" ")}`;
+        })
+        : [];
+      const header = table.comment ? `${table.name}（${table.comment}）` : table.name;
+      return [`- ${header}`, ...columnLines].join("\n");
+    });
+    context.push([
+      runtimeDataContextMarker,
+      `数据源：${dataContext.dataSourceName}（${dataContext.dataSourceType}）`,
+      "用户在本轮对话中明确指定了要使用的表，server.js 的 query 与 schema 必须基于这些真实存在的表和字段。",
+      "以下为表结构与字段信息（字段顺序、数据类型、注释已校准），不要臆造不存在的字段或类型，也不要访问未列出的其他表。",
+      ...tableBlocks,
     ].join("\n"));
   }
 
@@ -773,6 +840,8 @@ async function runWebAgent(input: {
   message: string;
   images?: RuntimePromptImage[];
   attachments?: RuntimePromptAttachment[];
+  dataContext?: RuntimePromptDataContext;
+  theme?: RuntimePromptTheme;
   workingDirectory: string;
   reportName: string;
   reportCode?: string;
@@ -883,7 +952,7 @@ async function runWebAgent(input: {
     }
   };
 
-  const promptMessage = buildRuntimePromptMessage(input.message, input.attachments, input.images?.length || 0);
+  const promptMessage = buildRuntimePromptMessage(input.message, input.attachments, input.images?.length || 0, input.dataContext, input.theme);
   const content = [
     ...(input.images || []),
     ...(promptMessage ? [{ type: "text" as const, text: promptMessage }] : []),
@@ -1017,6 +1086,8 @@ export async function requestReportAgentFromRuntime({
   message,
   images,
   attachments,
+  dataContext,
+  theme,
   workingDirectory,
   reportName,
   sessionId,
@@ -1030,6 +1101,8 @@ export async function requestReportAgentFromRuntime({
   message: string;
   images?: RuntimePromptImage[];
   attachments?: RuntimePromptAttachment[];
+  dataContext?: RuntimePromptDataContext;
+  theme?: RuntimePromptTheme;
   workingDirectory: string;
   reportName: string;
   sessionId?: string | null;
@@ -1040,7 +1113,7 @@ export async function requestReportAgentFromRuntime({
   onQuestionEvent?: (event: RuntimeQuestionEvent) => void | Promise<void>;
   signal?: AbortSignal;
 }) {
-  const result = await runWebAgent({ message, images, attachments, workingDirectory, reportName, sessionId, tenantId, reportCode, onSessionReady, onEvent, onQuestionEvent, signal });
+  const result = await runWebAgent({ message, images, attachments, dataContext, theme, workingDirectory, reportName, sessionId, tenantId, reportCode, onSessionReady, onEvent, onQuestionEvent, signal });
   return {
     output: result.output,
     dshSessionId: result.sessionId,

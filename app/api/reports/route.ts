@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getAuthSession } from "@/lib/server/auth-session";
 import { createReport, listReports } from "@/lib/server/report-repository";
+import { normalizeReportThemeId } from "@/lib/report-themes";
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -10,6 +11,17 @@ function text(value: unknown) {
 function parseId(value: unknown) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function parseTheme(value: unknown): { id: string; custom?: string } | undefined {
+  if (typeof value === "string") {
+    return { id: normalizeReportThemeId(value) };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as { id?: unknown; custom?: unknown };
+  const id = normalizeReportThemeId(candidate.id);
+  const custom = typeof candidate.custom === "string" ? candidate.custom.trim() : "";
+  return { id, ...(custom ? { custom } : {}) };
 }
 
 export async function GET() {
@@ -42,6 +54,7 @@ export async function POST(request: Request) {
       name,
       ownerId: session.userId,
       ownerName: session.name || session.username,
+      theme: parseTheme(body.theme),
     });
     if (!report) return NextResponse.json({ message: "目录不存在" }, { status: 404 });
     return NextResponse.json({ report }, { status: 201 });

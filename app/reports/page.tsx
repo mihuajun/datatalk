@@ -20,6 +20,9 @@ import {
   X,
 } from "lucide-react";
 import type { ReportFolder, ReportItem, ReportStatus } from "@/lib/report-types";
+import type { ReportThemeId } from "@/lib/report-themes";
+import { REPORT_THEMES } from "@/lib/report-themes";
+import { ExportHtmlButton } from "@/components/export-html-button";
 import { useRouter } from "next/navigation";
 
 function findFolder(folders: ReportFolder[], id: string | null): ReportFolder | null {
@@ -169,6 +172,10 @@ export default function ReportsPage() {
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
   const [loadingReleases, setLoadingReleases] = useState(false);
   const [switchingVersion, setSwitchingVersion] = useState<number | null>(null);
+  const [createModalFolder, setCreateModalFolder] = useState<ReportFolder | null>(null);
+  const [createName, setCreateName] = useState("未命名报表");
+  const [createTheme, setCreateTheme] = useState<ReportThemeId>("default");
+  const [createCustomTheme, setCreateCustomTheme] = useState("");
 
   const loadFavorites = useCallback(async () => {
     setLoading(true);
@@ -312,21 +319,48 @@ export default function ReportsPage() {
     }
   }
 
-  async function createReport(folder: ReportFolder) {
+  function openCreateModal(folder: ReportFolder) {
     if (creating) return;
-
     setMenuOpenId(null);
+    setCreateModalFolder(folder);
+    setCreateName("未命名报表");
+    setCreateTheme("default");
+    setCreateCustomTheme("");
+  }
+
+  function closeCreateModal() {
+    if (creating) return;
+    setCreateModalFolder(null);
+  }
+
+  async function confirmCreateReport() {
+    const folder = createModalFolder;
+    if (!folder || creating) return;
+    const name = createName.trim() || "未命名报表";
+    if (createTheme === "custom" && !createCustomTheme.trim()) {
+      setError("请填写自定义风格描述");
+      return;
+    }
+
     setCreating(true);
     setError("");
     try {
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ folderId: folder.id, name: "未命名报表" }),
+        body: JSON.stringify({
+          folderId: folder.id,
+          name,
+          theme: {
+            id: createTheme,
+            ...(createTheme === "custom" && createCustomTheme.trim() ? { custom: createCustomTheme.trim() } : {}),
+          },
+        }),
       });
       const result = await response.json() as { message?: string; report?: ReportItem };
       if (!response.ok) throw new Error(result.message || "创建报表失败");
       if (!result.report) throw new Error("创建报表失败");
+      setCreateModalFolder(null);
       router.push(`/reports/editor/${encodeURIComponent(result.report.code)}`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "创建报表失败");
@@ -498,7 +532,7 @@ export default function ReportsPage() {
                 {["w-11/12", "w-8/12", "w-10/12"].map((width) => <div key={width} className={`h-8 animate-pulse rounded-md bg-[#E9EEF6] ${width}`} />)}
               </div>
             ) : folders.length ? (
-              <FolderTree folders={folders} selected={selected} expanded={expanded} onSelect={setSelected} onToggle={toggleFolder} menuOpenId={menuOpenId} onMenuToggle={(id) => setMenuOpenId((previous) => previous === id ? null : id)} onCreateChild={(id) => void createFolder(id)} onRename={(folder) => void renameFolder(folder)} onCreateReport={(folder) => void createReport(folder)} onDelete={(folder) => void deleteFolder(folder)} />
+              <FolderTree folders={folders} selected={selected} expanded={expanded} onSelect={setSelected} onToggle={toggleFolder} menuOpenId={menuOpenId} onMenuToggle={(id) => setMenuOpenId((previous) => previous === id ? null : id)} onCreateChild={(id) => void createFolder(id)} onRename={(folder) => void renameFolder(folder)} onCreateReport={(folder) => openCreateModal(folder)} onDelete={(folder) => void deleteFolder(folder)} />
             ) : null}
           </div>
         </aside>
@@ -515,7 +549,7 @@ export default function ReportsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => createReportTarget && void createReport(createReportTarget)}
+                onClick={() => createReportTarget && openCreateModal(createReportTarget)}
                 disabled={loading || creating || !createReportTarget}
                 className="inline-flex h-[38px] items-center gap-2 rounded-md bg-[#2167E8] px-3 text-xs font-semibold text-white shadow-[0_6px_14px_rgba(33,103,232,0.18)] transition hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -538,12 +572,97 @@ export default function ReportsPage() {
             {loading ? <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">正在加载报表数据...</div> : showFavorites ? favorites.length ? (
               <table className="data-table min-w-[700px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="px-4">摘要</th><th className="w-[150px] px-4">收藏时间</th><th className="w-[100px] px-4">操作</th></tr></thead><tbody>{favorites.map((favorite, index) => <tr key={favorite.code} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#FFF8ED] text-[#D97706]"><Star className="h-4 w-4" /></span>{favorite.title}</div><div className="mt-1 pl-9 text-[11px] text-[#8A98AC]">{favorite.code}</div></td><td className="max-w-[320px] truncate px-4 text-[#526174]">{favorite.summary || "—"}</td><td className="px-4 text-[#526174]">{favorite.createdAt}</td><td className="px-4"><button type="button" onClick={() => window.open(`/view/${encodeURIComponent(favorite.code)}`, "_blank", "noopener,noreferrer")} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">还没有收藏报告</div> : reports.length ? (
-              <table className="data-table min-w-[900px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[260px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><button type="button" onClick={() => void copyReport(report)} disabled={copyingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{copyingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}复制</button><button type="button" onClick={() => void openVersionModal(report)} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline"><GitBranch className="h-3.5 w-3.5" />版本</button><button type="button" onClick={() => void deleteReport(report)} disabled={deletingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#D92D20] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{deletingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button></div></td></tr>)}</tbody></table>
+              <table className="data-table min-w-[900px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[320px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><ExportHtmlButton reportCode={report.code} reportName={report.name} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] transition hover:text-[#2167E8]" /><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><button type="button" onClick={() => void copyReport(report)} disabled={copyingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{copyingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}复制</button><button type="button" onClick={() => void openVersionModal(report)} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline"><GitBranch className="h-3.5 w-3.5" />版本</button><button type="button" onClick={() => void deleteReport(report)} disabled={deletingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#D92D20] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{deletingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button></div></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">{current ? "当前目录还没有匹配的报表" : "暂无报表目录，请先初始化报表数据"}</div>}
           </div>
           <div className="flex min-h-[50px] items-center justify-between border-t border-[#E7EDF5] bg-white px-4 py-2 text-xs text-[#526174]"><span>共 {showFavorites ? favorites.length : reports.length} 条记录{!showFavorites && summary.reportCount ? `，当前租户共 ${summary.reportCount} 张` : ""}</span><div className="flex items-center gap-1"><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="上一页" disabled><ChevronLeft className="h-4 w-4" /></button><span className="rounded bg-[#EDF3FF] px-2.5 py-1.5 font-semibold text-[#2167E8]">1</span><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="下一页" disabled><ChevronRight className="h-4 w-4" /></button></div></div>
         </section>
       </section>
+
+      {createModalFolder ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeCreateModal}>
+          <div className="panel max-h-[85vh] w-[640px] max-w-[94vw] overflow-hidden bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#E7EDF5] px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <FilePlus2 className="h-4 w-4 text-[#2167E8]" />
+                <h3 className="text-[15px] font-bold text-[#17243A]">新建报表</h3>
+                <span className="text-xs text-[#8A98AC]">— {createModalFolder.name}</span>
+              </div>
+              <button type="button" onClick={closeCreateModal} className="rounded p-1 text-[#8A98AC] hover:bg-[#F5F8FD] hover:text-[#344054]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[62vh] overflow-y-auto px-5 py-4">
+              <label className="block text-xs font-semibold text-[#526174]">
+                报表名称
+                <input
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  maxLength={160}
+                  className="mt-1.5 h-9 w-full rounded-md border border-[#DDE5F0] bg-white px-3 text-[13px] text-[#17243A] outline-none placeholder:text-[#98A2B3] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10"
+                  placeholder="请输入报表名称"
+                />
+              </label>
+
+              <div className="mt-4 text-xs font-semibold text-[#526174]">选择风格</div>
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {REPORT_THEMES.map((theme) => {
+                  const active = createTheme === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setCreateTheme(theme.id)}
+                      className={`rounded-lg border p-3 text-left transition ${
+                        active
+                          ? "border-[#2167E8] bg-[#EDF3FF] ring-2 ring-[#2167E8]/20"
+                          : "border-[#DDE5F0] bg-white hover:border-[#B8C5D8] hover:bg-[#F8FAFD]"
+                      }`}
+                    >
+                      <span className="flex h-14 w-full overflow-hidden rounded-md border border-[#E7EDF5]" style={{ background: theme.swatches.background }}>
+                        <span className="m-2 flex-1 rounded-sm" style={{ background: theme.swatches.primary, opacity: 0.9 }} />
+                        <span className="m-2 ml-0 w-6 rounded-sm" style={{ background: theme.swatches.accent, opacity: 0.9 }} />
+                      </span>
+                      <span className={`mt-2 block text-[13px] font-bold ${active ? "text-[#2167E8]" : "text-[#344054]"}`}>{theme.name}</span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-[#8A98AC]">{theme.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {createTheme === "custom" ? (
+                <label className="mt-4 block text-xs font-semibold text-[#526174]">
+                  自定义风格描述
+                  <textarea
+                    value={createCustomTheme}
+                    onChange={(event) => setCreateCustomTheme(event.target.value)}
+                    rows={3}
+                    maxLength={500}
+                    className="mt-1.5 w-full resize-none rounded-md border border-[#DDE5F0] bg-white px-3 py-2 text-[13px] text-[#17243A] outline-none placeholder:text-[#98A2B3] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10"
+                    placeholder="例如：整体使用国风配色，朱红主色，米白背景，标题用宋体，卡片带中式纹样边框..."
+                  />
+                </label>
+              ) : null}
+
+              <p className="mt-3 text-[11px] leading-4 text-[#8A98AC]">风格会作为初始设计要求提供给 AI；对话过程中也可以随时要求切换风格。</p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[#E7EDF5] bg-[#F8FAFD] px-5 py-3">
+              <button type="button" onClick={closeCreateModal} disabled={creating} className="rounded-md border border-[#DDE5F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:opacity-60">取消</button>
+              <button
+                type="button"
+                onClick={() => void confirmCreateReport()}
+                disabled={creating}
+                className="inline-flex items-center gap-2 rounded-md bg-[#2167E8] px-4 py-1.5 text-xs font-semibold text-white shadow-[0_6px_14px_rgba(33,103,232,0.18)] transition hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+                {creating ? "创建中" : "创建报表"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {versionModalCode ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeVersionModal}>

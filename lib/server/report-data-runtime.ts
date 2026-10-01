@@ -18,6 +18,8 @@ type RuntimeSource = "working" | "release";
 type RuntimeFilters = Record<string, unknown>;
 type QueryParamValue = string | number | boolean | null | Array<string | number>;
 
+const SAMPLE_MAX_ROWS = 10;
+
 type RuntimeQueryOptions = {
   timeoutMs?: number;
   maxRows?: number;
@@ -276,6 +278,8 @@ export async function executeReportDataRequest(input: {
   const entry = getRuntimeEntry(handler);
   const filterManifest = await readReportFilterManifest(input.tenantId, input.reportCode, input.source, input.releaseVersion);
   const filters = normalizeFilters(input.filters, filterManifest);
+  // working 源（AI 制作过程 + 编辑器快速预览）使用样本数据：每次查询最多返回 10 行
+  const isSample = input.source === "working";
   const context: RuntimeContext = {
     tenantId: input.tenantId,
     reportCode: input.reportCode,
@@ -291,7 +295,7 @@ export async function executeReportDataRequest(input: {
         sql,
         params: normalizeQueryParams(params),
         timeoutMs: options?.timeoutMs,
-        maxRows: options?.maxRows,
+        maxRows: isSample ? Math.min(options?.maxRows ?? SAMPLE_MAX_ROWS, SAMPLE_MAX_ROWS) : options?.maxRows,
         maxBytes: options?.maxBytes,
       });
       return result.rows;

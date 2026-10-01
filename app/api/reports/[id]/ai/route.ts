@@ -1,6 +1,10 @@
 import { getAuthSession } from "@/lib/server/auth-session";
-import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimeEvent, type RuntimePromptImage, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
+import fs from "node:fs";
+import path from "node:path";
+
+import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimeEvent, type RuntimePromptDataContext, type RuntimePromptImage, type RuntimePromptTheme, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
 import { getAgentRuntimeStatus } from "@/lib/server/agent-runtime";
+import { buildThemePrompt, findReportTheme, parseReportThemeFromDocument } from "@/lib/report-themes";
 import { bindReportAgentSession } from "@/lib/server/report-agent-session-binding";
 import { registerReportPreviewClient } from "@/lib/server/report-preview-inspection-bridge";
 import { isReportEditLockEnabled } from "@/lib/server/report-edit-lock";
@@ -8,7 +12,7 @@ import { getReportAiConversation, getReportDetailByCode, readReportWorkspaceSnap
 import { getWorkspaceHead, getWorkspaceStatusEntries } from "@/lib/server/local-git";
 import { finalizeMetricKnowledgeProposals } from "@/lib/server/report-metric-knowledge-service";
 import { cleanupRuntimeAttachments, stageRuntimeAttachments, type RuntimeAttachmentInput } from "@/lib/server/report-runtime-attachments";
-import { getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
+import { getReportWorkingPath, getReportWorkspacePath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
 import { withReportAiWorkspaceCommitLock } from "@/lib/server/report-ai-workspace-lock";
 import { validateReportWorkspace } from "@/lib/server/report-schema";
 import { commitRuntimeWorkspaceChanges } from "@/lib/server/report-workspace-service";
@@ -121,6 +125,7 @@ function validationIssueText(validation: Awaited<ReturnType<typeof validateRepor
 type ParsedAiRequest = {
   message: string;
   images: unknown;
+  dataContext: RuntimePromptDataContext | undefined;
   lockToken: string;
   conversationId: string | undefined;
   files: RuntimeAttachmentInput[];
@@ -138,13 +143,43 @@ function isRuntimeAttachmentFile(value: FormDataEntryValue): value is File {
     && typeof value.arrayBuffer === "function";
 }
 
+function parseDataContext(value: unknown): RuntimePromptDataContext | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as { dataSourceName?: unknown; dataSourceType?: unknown; tables?: unknown };
+  const dataSourceName = typeof candidate.dataSourceName === "string" ? candidate.dataSourceName.trim() : "";
+  const dataSourceType = typeof candidate.dataSourceType === "string" ? candidate.dataSourceType.trim() : "";
+  if (!dataSourceName || !dataSourceType || !Array.isArray(candidate.tables) || candidate.tables.length === 0) return undefined;
+  const tables: RuntimePromptDataContext["tables"] = [];
+  for (const item of candidate.tables) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const table = item as { name?: unknown; comment?: unknown; columns?: unknown };
+    const name = typeof table.name === "string" ? table.name.trim() : "";
+    if (!name) continue;
+    const columns = Array.isArray(table.columns) ? table.columns.flatMap((column) => {
+      if (!column || typeof column !== "object" || Array.isArray(column)) return [];
+      const field = column as { name?: unknown; dataType?: unknown; nullable?: unknown; comment?: unknown };
+      const columnName = typeof field.name === "string" ? field.name.trim() : "";
+      if (!columnName) return [];
+      return [{
+        name: columnName,
+        ...(typeof field.dataType === "string" && field.dataType ? { dataType: field.dataType } : {}),
+        ...(field.nullable === true ? { nullable: true } : {}),
+        ...(typeof field.comment === "string" && field.comment ? { comment: field.comment } : {}),
+      }];
+    }) : [];
+    tables.push({ name, ...(typeof table.comment === "string" && table.comment ? { comment: table.comment } : {}), columns });
+  }
+  return tables.length ? { dataSourceName, dataSourceType, tables } : undefined;
+}
+
 async function parseAiRequest(request: Request): Promise<ParsedAiRequest> {
   const contentType = request.headers.get("content-type")?.toLowerCase() || "";
   if (!contentType.includes("multipart/form-data")) {
-    const body = await request.json().catch(() => ({})) as { message?: unknown; images?: unknown; lockToken?: unknown; conversationId?: unknown };
+    const body = await request.json().catch(() => ({})) as { message?: unknown; images?: unknown; dataContext?: unknown; lockToken?: unknown; conversationId?: unknown };
     return {
       message: typeof body.message === "string" ? body.message.trim() : "",
       images: body.images,
+      dataContext: parseDataContext(body.dataContext),
       lockToken: typeof body.lockToken === "string" ? body.lockToken : "",
       conversationId: typeof body.conversationId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.conversationId) ? body.conversationId : undefined,
       files: [],
@@ -166,9 +201,19 @@ async function parseAiRequest(request: Request): Promise<ParsedAiRequest> {
   if (files.some((file) => !isRuntimeAttachmentFile(file))) throw new Error("附件参数无效");
 
   const conversationId = formText(formData, "conversationId");
+  const rawDataContext = formData.get("dataContext");
+  let dataContext: RuntimePromptDataContext | undefined;
+  if (typeof rawDataContext === "string" && rawDataContext.trim()) {
+    try {
+      dataContext = parseDataContext(JSON.parse(rawDataContext));
+    } catch {
+      throw new Error("数据源上下文参数无效");
+    }
+  }
   return {
     message: formText(formData, "message").trim(),
     images,
+    dataContext,
     lockToken: formText(formData, "lockToken"),
     conversationId: /^[A-Za-z0-9_-]{1,80}$/.test(conversationId) ? conversationId : undefined,
     files: files.filter(isRuntimeAttachmentFile),
@@ -256,6 +301,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const previousConversation = conversationId ? await getReportAiConversation(session.tenantId, reportCode, conversationId) : null;
   const workingDirectory = getReportWorkingPath(session.tenantId, reportCode);
+
+  let reportTheme: RuntimePromptTheme | undefined;
+  try {
+    const reportDocument = JSON.parse(await fs.promises.readFile(path.join(workingDirectory, "report.json"), "utf8")) as unknown;
+    const parsedTheme = parseReportThemeFromDocument(reportDocument);
+    reportTheme = {
+      id: parsedTheme.id,
+      name: findReportTheme(parsedTheme.id)?.name ?? (parsedTheme.id === "custom" ? "自定义" : "默认风格"),
+      prompt: buildThemePrompt(parsedTheme),
+    };
+  } catch {
+    reportTheme = undefined;
+  }
+
   let stagedAttachments;
   try {
     stagedAttachments = await stageRuntimeAttachments({
@@ -395,10 +454,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           });
         };
 
+        // Write .generating marker so public pages can show "updating" status
+        try {
+          const releasesDir = path.join(getReportWorkspacePath(session.tenantId, reportCode), "releases");
+          await fs.promises.mkdir(releasesDir, { recursive: true });
+          await fs.promises.writeFile(path.join(releasesDir, ".generating"), new Date().toISOString());
+        } catch { /* ignore marker write failure */ }
+
         let runtimeResult = await requestReportAgentFromRuntime({
           message,
           images,
           attachments: stagedAttachments.files,
+          dataContext: parsedRequest.dataContext,
+          theme: reportTheme,
           workingDirectory,
           reportName: current.report.name,
           sessionId: previousConversation?.dshSessionId,
@@ -436,6 +504,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
               "请读取当前 working 的最新文件和已有工具结果，只修复与本轮任务相关的问题；如果是视觉参考任务，必须调用 inspect_report_preview，使用 includeScreenshot=true 和 screenshotMode=full 检查当前 working，并根据结果修复后再次检查。",
               "完成后再次确认 report.json、page.html、styles.css、app.js、server.js 及其引用关系没有被破坏。",
             ].join("\n"),
+            theme: reportTheme,
             workingDirectory,
             reportName: current.report.name,
             sessionId: runtimeResult.dshSessionId,
@@ -552,6 +621,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         if (turnTimeoutHandle) clearTimeout(turnTimeoutHandle);
         disposePreviewClientRef.current?.();
         await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
+        // Remove .generating marker regardless of success/failure/cancel
+        try {
+          await fs.promises.unlink(path.join(getReportWorkspacePath(session.tenantId, reportCode), "releases", ".generating"));
+        } catch { /* ignore marker removal failure */ }
         if (!clientDisconnected && controller.desiredSize !== null) controller.close();
       }
     },

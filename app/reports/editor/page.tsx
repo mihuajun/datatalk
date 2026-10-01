@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleHelp,
   Copy,
+  Database,
   Download,
   Eye,
   EyeOff,
@@ -50,6 +51,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReportWebFrame } from "@/components/report-web-frame";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { PublicLinkPanel } from "@/components/reports/public-link-panel";
 import { ResourcePublishPanel } from "@/components/reports/resource-publish-panel";
 import { reportAiArtifactDownloadUrl, resolveReportAiSandboxArtifact, type ReportAiArtifact } from "@/lib/report-ai-artifacts";
@@ -146,6 +148,40 @@ type SentAiImagePreview = {
 
 type PendingAiMessageStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
+type AiDataContextColumn = {
+  name: string;
+  dataType?: string;
+  nullable?: boolean;
+  comment?: string;
+};
+
+type AiDataContextTable = {
+  name: string;
+  comment?: string;
+  columns?: AiDataContextColumn[];
+};
+
+type AiDataContextSelection = {
+  dataSourceId: number;
+  dataSourceName: string;
+  dataSourceType: string;
+  tables: AiDataContextTable[];
+};
+
+type DataSourceListItem = {
+  id: number;
+  name: string;
+  type: string;
+  host: string;
+  database: string;
+};
+
+type DataSourceSchemaEntry = {
+  tables: AiDataContextTable[];
+  loading: boolean;
+  error: string | null;
+};
+
 type PendingAiMessage = {
   id: string;
   message: string;
@@ -156,6 +192,7 @@ type PendingAiMessage = {
   error?: string;
   imageDrafts?: AiImageDraft[];
   fileDrafts?: AiFileDraft[];
+  dataContext?: AiDataContextSelection;
 };
 
 type PendingQuestionOption = {
@@ -1259,6 +1296,16 @@ function AiChatPanel({
   chatImages,
   chatFiles,
   selectedElements,
+  dataSources,
+  dataSourceMenuOpen,
+  activeDataSourceId,
+  dataSourceSchema,
+  selectedDataContext,
+  onToggleDataSourceMenu,
+  onSelectDataSource,
+  onToggleTable,
+  onRemoveSelectedTable,
+  onClearSelectedDataContext,
   onInputChange,
   onPaste,
   onPickAttachments,
@@ -1291,6 +1338,16 @@ function AiChatPanel({
   chatImages: AiImageDraft[];
   chatFiles: AiFileDraft[];
   selectedElements: ReportSelectedElement[];
+  dataSources: DataSourceListItem[];
+  dataSourceMenuOpen: boolean;
+  activeDataSourceId: number | null;
+  dataSourceSchema: Record<number, DataSourceSchemaEntry>;
+  selectedDataContext: AiDataContextSelection | null;
+  onToggleDataSourceMenu: () => void;
+  onSelectDataSource: (id: number) => void;
+  onToggleTable: (table: AiDataContextTable) => void;
+  onRemoveSelectedTable: (name: string) => void;
+  onClearSelectedDataContext: () => void;
   onInputChange: (value: string) => void;
   onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onPickAttachments: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -1314,7 +1371,9 @@ function AiChatPanel({
   const chatTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const conversationMenuRef = useRef<HTMLDivElement | null>(null);
+  const dataSourceMenuRef = useRef<HTMLDivElement | null>(null);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
+  const [tableSearch, setTableSearch] = useState("");
 
   useEffect(() => {
     if (selectedElements.length) chatTextareaRef.current?.focus();
@@ -1345,6 +1404,22 @@ function AiChatPanel({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [conversationMenuOpen]);
+
+  useEffect(() => {
+    if (!dataSourceMenuOpen) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (!dataSourceMenuRef.current?.contains(event.target as Node)) onToggleDataSourceMenu();
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onToggleDataSourceMenu();
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dataSourceMenuOpen, onToggleDataSourceMenu]);
 
   const activeNode = timeline.at(-1);
   const activeProgress = [...timeline].reverse().find((node) => node.kind === "progress" && node.step === undefined && node.status === "running");
@@ -1539,6 +1614,52 @@ function AiChatPanel({
                   {selectedElements.map((element) => <span key={element.selector} className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 rounded border border-[#C9DAF5] bg-white px-1.5 text-[#344054]" title={element.selector}><span className="min-w-0 max-w-[190px] truncate">{element.text || `<${element.tag}>`}</span><button type="button" onClick={() => onRemoveSelectedElement(element.selector)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#667085] hover:bg-[#EDF3FF] hover:text-[#2167E8]" aria-label={`移除选中元素 ${element.text || element.selector}`} title="移除选中元素"><X className="h-3 w-3" /></button></span>)}
                 </div>
               </div> : null}
+              {selectedDataContext?.tables.length ? <div className="mb-2 min-w-0 border-b border-[#DDE5F0] pb-2 text-[11px] text-[#2167E8]">
+                <div className="mb-1 flex items-center gap-1.5"><Database className="h-3.5 w-3.5 shrink-0" /><span className="flex-1 truncate font-semibold">{selectedDataContext.dataSourceName}<span className="ml-1 text-[#98A2B3]">·{selectedDataContext.dataSourceType}</span></span><button type="button" onClick={onClearSelectedDataContext} className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-[#EDF3FF]" aria-label="清除全部选中的表" title="清除全部选中的表"><X className="h-3.5 w-3.5" /></button></div>
+                <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                  {selectedDataContext.tables.map((table) => <span key={table.name} className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 rounded border border-[#C9DAF5] bg-white px-1.5 text-[#344054]" title={table.comment ? `${table.name}（${table.comment}）` : table.name}><span className="min-w-0 max-w-[200px] truncate">{table.name}</span><button type="button" onClick={() => onRemoveSelectedTable(table.name)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#667085] hover:bg-[#EDF3FF] hover:text-[#2167E8]" aria-label={`移除表 ${table.name}`} title="移除表"><X className="h-3 w-3" /></button></span>)}
+                </div>
+              </div> : null}
+              <div ref={dataSourceMenuRef} className="mb-2 border-b border-[#DDE5F0] pb-2">
+                <button type="button" onClick={onToggleDataSourceMenu} className="flex w-full items-center gap-1.5 text-[11px] text-[#2167E8]" aria-expanded={dataSourceMenuOpen} aria-label="选择数据源与表">
+                  <Database className="h-3.5 w-3.5 shrink-0" />
+                  <span className="flex-1 truncate text-left font-semibold">{selectedDataContext ? `${selectedDataContext.dataSourceName} · 已选 ${selectedDataContext.tables.length} 张表` : "选择数据源与表"}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[#98A2B3] transition ${dataSourceMenuOpen ? "rotate-180" : ""}`} />
+                </button>
+                {dataSourceMenuOpen ? <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {dataSources.length === 0 ? <span className="text-[11px] text-[#98A2B3]">暂无可用连接器</span> : dataSources.map((source) => {
+                      const isActive = activeDataSourceId === source.id;
+                      const isCurrent = selectedDataContext?.dataSourceId === source.id;
+                      return <button key={source.id} type="button" onClick={() => onSelectDataSource(source.id)} className={`inline-flex max-w-full items-center gap-1 rounded border px-2 py-1 text-[10px] transition ${isActive ? "border-[#2167E8] bg-[#EDF3FF] text-[#2167E8]" : "border-[#DDE5F0] bg-white text-[#526174] hover:bg-[#F5F8FD]"}`} title={`${source.name}（${source.type}）`}>
+                        <Database className="h-3 w-3 shrink-0" />
+                        <span className="min-w-0 truncate">{source.name}</span>
+                        {isCurrent ? <span className="shrink-0 rounded-full bg-[#2167E8] px-1 text-[9px] text-white">{selectedDataContext?.tables.length || 0}</span> : null}
+                      </button>;
+                    })}
+                  </div>
+                  {activeDataSourceId !== null ? <div className="space-y-1.5">
+                    <input type="text" value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} placeholder="搜索表名" className="w-full rounded border border-[#DDE5F0] px-2 py-1 text-[11px] outline-none focus:border-[#8DB7F8]" aria-label="搜索表名" />
+                    <div className="max-h-40 overflow-y-auto rounded border border-[#E7EDF5]">
+                      {(dataSourceSchema[activeDataSourceId]?.loading) ? <div className="flex items-center gap-1.5 px-2.5 py-3 text-[11px] text-[#98A2B3]"><LoaderCircle className="h-3 w-3 animate-spin" />加载表中…</div> : dataSourceSchema[activeDataSourceId]?.error ? <div className="px-2.5 py-3 text-[11px] text-[#B42318]">{dataSourceSchema[activeDataSourceId]?.error}</div> : (() => {
+                        const allTables = dataSourceSchema[activeDataSourceId]?.tables || [];
+                        const keyword = tableSearch.trim().toLowerCase();
+                        const filteredTables = keyword ? allTables.filter((table) => table.name.toLowerCase().includes(keyword) || (table.comment || "").toLowerCase().includes(keyword)) : allTables;
+                        if (filteredTables.length === 0) return <div className="px-2.5 py-3 text-[11px] text-[#98A2B3]">{allTables.length === 0 ? "该连接器暂无表" : "未匹配到表"}</div>;
+                        return filteredTables.map((table) => {
+                          const isSelected = selectedDataContext?.dataSourceId === activeDataSourceId && selectedDataContext.tables.some((item) => item.name === table.name);
+                          return <button key={table.name} type="button" onClick={() => onToggleTable(table)} className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] transition ${isSelected ? "bg-[#EDF3FF] text-[#2167E8]" : "text-[#344054] hover:bg-[#F5F8FD]"}`} title={table.comment ? `${table.name}（${table.comment}）` : table.name}>
+                            <Table2 className={`h-3.5 w-3.5 shrink-0 ${isSelected ? "text-[#2167E8]" : "text-[#98A2B3]"}`} />
+                            <span className="min-w-0 flex-1 truncate">{table.name}</span>
+                            {table.comment ? <span className="min-w-0 max-w-[45%] truncate text-[10px] text-[#98A2B3]">{table.comment}</span> : null}
+                            {isSelected ? <Check className="h-3 w-3 shrink-0 text-[#2167E8]" /> : null}
+                          </button>;
+                        });
+                      })()}
+                    </div>
+                  </div> : null}
+                </div> : null}
+              </div>
               {chatImages.length || chatFiles.length ? <div className="mb-2 flex max-w-full flex-wrap gap-2 overflow-hidden pb-1">
                 {chatImages.map((image) => <div key={image.id} className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-[#DDE5F0] bg-white"><img src={image.previewUrl} alt={image.name || "待发送附件"} className="h-full w-full object-cover" /><button type="button" onClick={() => onRemoveImage(image.id)} className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#17243A]/75 text-white opacity-0 transition group-hover:opacity-100" aria-label={`移除附件${image.name ? ` ${image.name}` : ""}`} title="移除附件"><X className="h-3 w-3" /></button></div>)}
                 {chatFiles.map((attachment) => <div key={attachment.id} className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-[#DDE5F0] bg-white px-2 py-1.5 text-[#526174]" title={`${attachment.file.name}（${formatAiFileSize(attachment.file.size)}）`}><FileText className="h-3.5 w-3.5 shrink-0 text-[#2167E8]" /><span className="min-w-0 max-w-[150px] truncate text-[10px]">{attachment.file.name}</span><span className="shrink-0 text-[10px] text-[#98A2B3]">{formatAiFileSize(attachment.file.size)}</span><button type="button" onClick={() => onRemoveFile(attachment.id)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#98A2B3] hover:bg-[#F3F6FA] hover:text-[#B42318]" aria-label={`移除附件 ${attachment.file.name}`} title="移除附件"><X className="h-3 w-3" /></button></div>)}
@@ -1550,7 +1671,7 @@ function AiChatPanel({
                 </div>
                 {attachmentSummary ? <span className="min-w-0 flex-1 truncate text-[10px] text-[#98A2B3]">{attachmentSummary}待发送</span> : <span className="flex-1" />}
                 <div className="flex shrink-0 items-center gap-1">
-                  <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0} className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2167E8] text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>
+                  <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0 && !selectedDataContext?.tables.length} className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2167E8] text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>
                   {streaming ? <button type="button" onClick={onStop} disabled={stopping} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#F5D4CC] bg-[#FFF8F6] text-[#B42318] hover:bg-[#FDECE8] disabled:cursor-wait disabled:opacity-50" aria-label="停止 AI 任务" title="停止 AI 任务"><Square className="h-3.5 w-3.5 fill-current" /></button> : null}
                 </div>
               </div>
@@ -1927,6 +2048,11 @@ function readAiFileDraft(file: File): AiFileDraft {
   };
 }
 
+function stripRuntimeContextMarkers(text: string): string {
+  if (!text) return text;
+  return text.split("\n\n").filter((block) => !block.startsWith("本轮对话包含") && !block.startsWith("本报表的页面风格要求：")).join("\n\n").trim();
+}
+
 function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiImagePreview[] = [], pendingMessages: PendingAiMessage[] = []) {
   const timeline: AiTimelineNode[] = [];
   const runningTools = new Map<string, number>();
@@ -2026,14 +2152,14 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
 
     if (eventType === "user/message" && event.surfaceOp === "append") {
       const runtimeContent = textOfBlocks(eventData?.content) || textOfBlocks(eventData?.message?.content);
-      const content = runtimeContent.trim();
+      const strippedContent = stripRuntimeContextMarkers(runtimeContent);
+      const content = strippedContent.trim();
       const visible = readSelectedElementContext(content);
       const sourceKind = eventData?.source?.kind || eventData?.message?.source?.kind;
-      const normalizedContent = runtimeContent.trim();
-      const pendingMessage = pendingMessages.find((candidate) => !matchedPendingMessageIds.has(candidate.id) && runtimeMessageMatchesPending(normalizedContent, candidate.message));
+      const pendingMessage = pendingMessages.find((candidate) => !matchedPendingMessageIds.has(candidate.id) && runtimeMessageMatchesPending(strippedContent, candidate.message));
       if (pendingMessage) matchedPendingMessageIds.add(pendingMessage.id);
       const sentImagePreview = sentImagePreviews[sentImagePreviewIndex];
-      const images = sentImagePreview && runtimeMessageMatchesPending(runtimeContent, sentImagePreview.message) ? sentImagePreview.previews : undefined;
+      const images = sentImagePreview && runtimeMessageMatchesPending(strippedContent, sentImagePreview.message) ? sentImagePreview.previews : undefined;
       if (images) sentImagePreviewIndex += 1;
       if ((content || images?.length) && (sourceKind === "user" || !sourceKind)) timeline.push({ id: `user-${eventKey}`, kind: "user", content: visible.message, selectedElements: visible.selected, images, time: eventTime });
       continue;
@@ -2831,6 +2957,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const [lockConflict, setLockConflict] = useState<{ name?: string } | null>(null);
   const [workingStatus, setWorkingStatus] = useState("");
   const [error, setError] = useState("");
+  const [exportingHtml, setExportingHtml] = useState(false);
   const [savedAt, setSavedAt] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatImages, setChatImages] = useState<AiImageDraft[]>([]);
@@ -2842,6 +2969,12 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const [pendingQuestion, setPendingQuestion] = useState<PendingQuestionRequest | null>(null);
   const [questionSubmitting, setQuestionSubmitting] = useState(false);
   const [questionError, setQuestionError] = useState("");
+  const [dataSources, setDataSources] = useState<DataSourceListItem[]>([]);
+  const [dataSourceMenuOpen, setDataSourceMenuOpen] = useState(false);
+  const [activeDataSourceId, setActiveDataSourceId] = useState<number | null>(null);
+  const [dataSourceSchema, setDataSourceSchema] = useState<Record<number, DataSourceSchemaEntry>>({});
+  const [selectedDataContext, setSelectedDataContext] = useState<AiDataContextSelection | null>(null);
+  const selectedDataContextRef = useRef<AiDataContextSelection | null>(null);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEventPayload[]>([]);
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -2865,6 +2998,100 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
   function updatePendingMessages(updater: (current: PendingAiMessage[]) => PendingAiMessage[]) {
     commitPendingMessages(updater(pendingMessagesRef.current));
+  }
+
+  useEffect(() => {
+    selectedDataContextRef.current = selectedDataContext;
+  }, [selectedDataContext]);
+
+  const loadDataSourceSchema = useCallback(async (id: number) => {
+    setDataSourceSchema((current) => ({
+      ...current,
+      [id]: { tables: current[id]?.tables || [], loading: true, error: null },
+    }));
+    try {
+      const url = new URL("/api/data-sources/" + encodeURIComponent(id) + "/schema", window.location.origin);
+      url.searchParams.set("limit", "50");
+      const response = await fetch(url.toString(), { headers: { Accept: "application/json" }, cache: "no-store" });
+      const result = await response.json().catch(() => ({})) as { tables?: AiDataContextTable[]; message?: string };
+      if (!response.ok || !Array.isArray(result.tables)) {
+        throw new Error(result.message || "获取表结构失败");
+      }
+      setDataSourceSchema((current) => ({
+        ...current,
+        [id]: { tables: result.tables as AiDataContextTable[], loading: false, error: null },
+      }));
+    } catch (error) {
+      setDataSourceSchema((current) => ({
+        ...current,
+        [id]: { tables: current[id]?.tables || [], loading: false, error: error instanceof Error ? error.message : "获取表结构失败" },
+      }));
+    }
+  }, []);
+
+  const loadDataSources = useCallback(async () => {
+    try {
+      const response = await fetch("/api/data-sources", { headers: { Accept: "application/json" }, cache: "no-store" });
+      const result = await response.json().catch(() => ({})) as { dataSources?: Array<{ id: number; name: string; type: string; host: string; database: string }> };
+      if (!response.ok || !Array.isArray(result.dataSources)) {
+        setDataSources([]);
+        return;
+      }
+      const items = result.dataSources.map((source) => ({
+        id: Number(source.id),
+        name: source.name,
+        type: source.type,
+        host: source.host,
+        database: source.database || "",
+      }));
+      setDataSources(items);
+      const firstId = items[0]?.id;
+      if (firstId !== undefined && firstId !== null) {
+        setActiveDataSourceId(firstId);
+        void loadDataSourceSchema(firstId);
+      }
+    } catch {
+      setDataSources([]);
+    }
+  }, [loadDataSourceSchema]);
+
+  function openDataSourceMenu() {
+    if (dataSources.length === 0) void loadDataSources();
+    setDataSourceMenuOpen((current) => !current);
+  }
+
+  function selectDataSourceForMenu(id: number) {
+    setActiveDataSourceId(id);
+    if (!dataSourceSchema[id] || (dataSourceSchema[id].error && !dataSourceSchema[id].loading)) void loadDataSourceSchema(id);
+  }
+
+  function toggleTableSelection(table: AiDataContextTable) {
+    setSelectedDataContext((current) => {
+      const activeSource = dataSources.find((source) => source.id === activeDataSourceId);
+      if (!activeSource) return current;
+      const base = current && current.dataSourceId === activeSource.id
+        ? current
+        : { dataSourceId: activeSource.id, dataSourceName: activeSource.name, dataSourceType: activeSource.type, tables: [] };
+      const exists = base.tables.find((item) => item.name === table.name);
+      const nextTables = exists
+        ? base.tables.filter((item) => item.name !== table.name)
+        : [...base.tables, table];
+      return nextTables.length
+        ? { ...base, tables: nextTables }
+        : null;
+    });
+  }
+
+  function removeSelectedTable(name: string) {
+    setSelectedDataContext((current) => {
+      if (!current) return current;
+      const nextTables = current.tables.filter((item) => item.name !== name);
+      return nextTables.length ? { ...current, tables: nextTables } : null;
+    });
+  }
+
+  function clearSelectedDataContext() {
+    setSelectedDataContext(null);
   }
   const [zoom, setZoom] = useState(100);
   const [webAutoFit, setWebAutoFit] = useState(true);
@@ -3612,6 +3839,35 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     }
   }
 
+  async function exportStaticHtml() {
+    if (!normalizedReportCode) return;
+    setExportingHtml(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(normalizedReportCode)}/export-html`, { method: "POST" });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({ message: "导出失败" }));
+        throw new Error(result.message || "导出失败");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disposition = response.headers.get("Content-Disposition");
+      const match = /filename\*=UTF-8''(.+)/.exec(disposition || "");
+      a.download = match ? decodeURIComponent(match[1]) : `${report?.name || normalizedReportCode}.html`;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setWorkingStatus("静态 HTML 已导出");
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "导出静态 HTML 失败");
+    } finally {
+      setExportingHtml(false);
+    }
+  }
+
   async function publishReport() {
     if (!lockToken) {
       setError("编辑锁已失效，请退出后重新进入");
@@ -3785,13 +4041,14 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     }
   }
 
-  async function streamAiEdit(message: string, conversationId: string | null, images: AiImageDraft[], files: AiFileDraft[], signal?: AbortSignal) {
+  async function streamAiEdit(message: string, conversationId: string | null, images: AiImageDraft[], files: AiFileDraft[], dataContext: AiDataContextSelection | null, signal?: AbortSignal) {
     if (!normalizedReportCode || !lockToken) throw new Error("编辑锁已失效，请退出后重新进入");
     const formData = new FormData();
     formData.set("message", message);
     formData.set("images", JSON.stringify(images.map(({ mediaType, data, name }) => ({ mediaType, data, name }))));
     formData.set("lockToken", lockToken);
     if (conversationId) formData.set("conversationId", conversationId);
+    if (dataContext && dataContext.tables.length) formData.set("dataContext", JSON.stringify(dataContext));
     for (const attachment of files) formData.append("files", attachment.file, attachment.file.name);
     const response = await fetch(`/api/reports/${encodeURIComponent(normalizedReportCode)}/ai`, {
       method: "POST",
@@ -4051,8 +4308,9 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     const conversationId = activeConversationIdRef.current || activeConversationId;
     const images = next.imageDrafts || [];
     const files = next.fileDrafts || [];
+    const dataContext = next.dataContext || null;
     try {
-      await streamAiEdit(next.message, conversationId, images, files, controller.signal);
+      await streamAiEdit(next.message, conversationId, images, files, dataContext, controller.signal);
       updatePendingMessages((current) => current.map((candidate) => candidate.id === next.id ? { ...candidate, status: "done" } : candidate));
     } catch (chatError) {
       const aborted = controller.signal.aborted || (chatError instanceof Error && (chatError.name === "AbortError" || chatError.message === "AI_STREAM_ABORTED"));
@@ -4107,7 +4365,8 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     const targets = selectedElements;
     const images = chatImages;
     const files = chatFiles;
-    if (!message && !images.length && !files.length) return;
+    const dataContext = selectedDataContextRef.current;
+    if (!message && !images.length && !files.length && !dataContext) return;
     if (targets.some((target) => target.workspaceFingerprint !== workspaceFingerprintRef.current)) {
       setSelectedElements([]);
       setError("选中元素已过期，请重新从当前预览选取");
@@ -4128,6 +4387,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       status: "queued",
       imageDrafts: images,
       fileDrafts: files,
+      ...(dataContext ? { dataContext } : {}),
     };
     updatePendingMessages((current) => [...current, pendingMessage]);
     setSentImagePreviews((current) => [...current, { id: pendingId, message: prompt, previews: images.map((image) => image.previewUrl) }]);
@@ -4568,6 +4828,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
           <span aria-live="polite" className="hidden max-w-[180px] truncate text-[11px] text-[#16845B] xl:inline">{workingStatus}</span>
           <span className={`hidden rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${report.status === "已发布" ? "bg-[#EAF8F2] text-[#16845B]" : "bg-[#FFF5E8] text-[#B76700]"}`}>{report.status}</span>
           <a href={previewReportLink} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[#DDE5F0] bg-white px-3 text-xs font-semibold text-[#526174] transition hover:border-[#2167E8] hover:text-[#2167E8]" aria-label="在新标签页预览报表" title="在新标签页预览报表"><Eye className="h-3.5 w-3.5" />预览</a>
+          <button type="button" onClick={() => void exportStaticHtml()} disabled={exportingHtml} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[#DDE5F0] bg-white px-3 text-xs font-semibold text-[#526174] transition hover:border-[#2167E8] hover:text-[#2167E8] disabled:cursor-not-allowed disabled:opacity-45" aria-label="导出静态 HTML" title="导出静态 HTML"><Download className="h-3.5 w-3.5" />导出</button>
           <button type="button" onClick={() => void publishReport()} disabled={saving || !hasUnpublishedChanges} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#2167E8] px-3 text-xs font-semibold text-white shadow-[0_6px_14px_rgba(33,103,232,0.18)] hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-45"><Upload className="h-3.5 w-3.5" />发布</button>
           {resourceCenterEnabled ? (
             <div ref={resourcePanelRef}>
@@ -4605,6 +4866,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
           </button>
           <button type="button" onClick={() => void moveHistory(-1)} disabled={!canUndo || historyBusy} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="撤销上一次网页修改" title="撤销上一次网页修改"><Undo2 className="h-4 w-4" />撤销</button>
           <button type="button" onClick={() => void moveHistory(1)} disabled={!canRedo || historyBusy} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="重做网页修改" title="重做网页修改"><Redo2 className="h-4 w-4" />重做</button>
+          {normalizedReportCode ? <ThemeSwitcher reportCode={normalizedReportCode} /> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-[#71819B]">
           <button type="button" onClick={() => { setWebAutoFit(false); setZoom((current) => Math.max(minWebZoom, current - 10)); }} className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#F5F8FD]" aria-label="缩小画布" title="缩小画布"><Minus className="h-4 w-4" /></button>
@@ -4622,9 +4884,9 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
       <div className={`report-editor-grid relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${effectiveWebFiles["page.html"] ? "report-web-mode" : ""} ${aiPanelVisible ? "" : "ai-panel-hidden"}`} style={{ "--report-editor-ai-width": aiPanelVisible ? `${aiPanelWidth}px` : "0px", "--report-editor-properties-width": propertiesVisible ? "276px" : "0px" } as CSSProperties}>
         {publicLinkPanelVisible ? <button type="button" onPointerDown={() => setPublicLinkPanelVisible(false)} className="absolute inset-0 z-40 cursor-default border-0 bg-transparent p-0" aria-label="关闭公共链接设置" /> : null}
-        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden"><AiChatPanel reportCode={normalizedReportCode} timeline={timeline} streaming={aiStreaming} pendingMessages={pendingMessages} pendingQuestion={pendingQuestion} questionSubmitting={questionSubmitting} questionError={questionError} error={error} stopping={aiStopping} chatInput={chatInput} chatImages={chatImages} chatFiles={chatFiles} selectedElements={selectedElements} onInputChange={setChatInput} onPaste={handleAiAttachmentPaste} onPickAttachments={handleAiAttachmentPicker} onRemoveImage={(id) => setChatImages((current) => current.filter((image) => image.id !== id))} onRemoveFile={(id) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id))} onRemoveSelectedElement={(selector) => setSelectedElements((current) => current.filter((element) => element.selector !== selector))} onClearSelectedElements={() => setSelectedElements([])} onSubmit={submitChat} onStop={stopAiTask} onCancelPendingMessage={cancelPendingMessage} onRetryPendingMessage={retryPendingMessage} onSubmitQuestion={(answer) => void respondPendingQuestion(answer)} onCancelQuestion={() => void cancelPendingQuestion()} conversations={conversations} activeConversationId={activeConversationId} conversationLoading={conversationLoading} onSelectConversation={(conversationId) => void selectConversation(conversationId)} onNewConversation={startNewConversation} /><button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button></div>
+        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden"><AiChatPanel reportCode={normalizedReportCode} timeline={timeline} streaming={aiStreaming} pendingMessages={pendingMessages} pendingQuestion={pendingQuestion} questionSubmitting={questionSubmitting} questionError={questionError} error={error} stopping={aiStopping} chatInput={chatInput} chatImages={chatImages} chatFiles={chatFiles} selectedElements={selectedElements} dataSources={dataSources} dataSourceMenuOpen={dataSourceMenuOpen} activeDataSourceId={activeDataSourceId} dataSourceSchema={dataSourceSchema} selectedDataContext={selectedDataContext} onToggleDataSourceMenu={openDataSourceMenu} onSelectDataSource={selectDataSourceForMenu} onToggleTable={toggleTableSelection} onRemoveSelectedTable={removeSelectedTable} onClearSelectedDataContext={clearSelectedDataContext} onInputChange={setChatInput} onPaste={handleAiAttachmentPaste} onPickAttachments={handleAiAttachmentPicker} onRemoveImage={(id) => setChatImages((current) => current.filter((image) => image.id !== id))} onRemoveFile={(id) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id))} onRemoveSelectedElement={(selector) => setSelectedElements((current) => current.filter((element) => element.selector !== selector))} onClearSelectedElements={() => setSelectedElements([])} onSubmit={submitChat} onStop={stopAiTask} onCancelPendingMessage={cancelPendingMessage} onRetryPendingMessage={retryPendingMessage} onSubmitQuestion={(answer) => void respondPendingQuestion(answer)} onCancelQuestion={() => void cancelPendingQuestion()} conversations={conversations} activeConversationId={activeConversationId} conversationLoading={conversationLoading} onSelectConversation={(conversationId) => void selectConversation(conversationId)} onNewConversation={startNewConversation} /><button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button></div>
 
-        {effectiveWebFiles["page.html"] && normalizedReportCode ? <div className="report-web-overlay z-10 overflow-hidden bg-[#E9EEF4]"><WebReportCanvas reportCode={normalizedReportCode} files={effectiveWebFiles} workspaceFingerprint={workspaceFingerprint} filters={editorFilterValues} urlFilters={editorFilterResolution.urlValues} defaults={editorFilterResolution.defaults} zoom={zoom} autoFit={webAutoFit} fitRequestKey={fitRequestKey} refreshKey={contentRefreshKey} elementPickerEnabled={elementPickerEnabled} selectedElementSelectors={selectedElementSelectors} onElementPickerChange={setElementPickerEnabled} onElementSelected={handleElementSelected} onLoad={() => { previewRefreshPendingRef.current = false; setContentRefreshing(false); }} onZoomChange={handleCanvasZoomChange} onAutoFitZoomChange={handleAutoFitZoomChange} onFrameReady={(frame) => { webPreviewFrameRef.current = frame; if (frame) previewRefreshPendingRef.current = false; }} onFocusControllerChange={handleCanvasFocusControllerChange} /></div> : null}
+        {effectiveWebFiles["page.html"] && normalizedReportCode ? <div className="report-web-overlay z-10 flex flex-col overflow-hidden bg-[#E9EEF4]"><div className="flex shrink-0 items-center gap-1.5 border-b border-[#F0D68A] bg-[#FFFBEB] px-3 py-1.5 text-[11px] font-medium text-[#92600A]"><svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0" fill="none" aria-hidden="true"><path d="M8 5.5v3M8 11h.01M6.9 2.6 1.8 11.3A1 1 0 0 0 2.7 12.8h10.6a1 1 0 0 0 .9-1.5L9.1 2.6a1 1 0 0 0-2.2 0Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>预览使用样本数据（每次查询最多返回前 10 行），发布后查看为全量实时数据</div><div className="min-h-0 flex-1"><WebReportCanvas reportCode={normalizedReportCode} files={effectiveWebFiles} workspaceFingerprint={workspaceFingerprint} filters={editorFilterValues} urlFilters={editorFilterResolution.urlValues} defaults={editorFilterResolution.defaults} zoom={zoom} autoFit={webAutoFit} fitRequestKey={fitRequestKey} refreshKey={contentRefreshKey} elementPickerEnabled={elementPickerEnabled} selectedElementSelectors={selectedElementSelectors} onElementPickerChange={setElementPickerEnabled} onElementSelected={handleElementSelected} onLoad={() => { previewRefreshPendingRef.current = false; setContentRefreshing(false); }} onZoomChange={handleCanvasZoomChange} onAutoFitZoomChange={handleAutoFitZoomChange} onFrameReady={(frame) => { webPreviewFrameRef.current = frame; if (frame) previewRefreshPendingRef.current = false; }} onFocusControllerChange={handleCanvasFocusControllerChange} /></div></div> : null}
 
         <main className="relative min-h-0 overflow-auto bg-[#EEF3F9] p-4 sm:p-6"><div className="mx-auto w-[1000px] max-w-none transition-transform" style={{ transform: `scale(${zoom / 100})`, transformOrigin: "top left" }}><div className="overflow-hidden border border-[#DCE5F0] bg-white shadow-[0_12px_30px_rgba(30,68,119,0.08)]"><div className="border-b border-[#E7EDF5] px-7 pb-5 pt-7"><div className="flex items-start justify-between gap-5"><div><div className="flex items-center gap-2 text-[11px] font-semibold text-[#2167E8]"><Sparkles className="h-3.5 w-3.5" />智能报表</div><h1 className="mt-2 text-[22px] font-extrabold tracking-[-0.03em] text-[#17243A]">{definition.title}</h1><p className="mt-1.5 text-xs text-[#8A98AC]">经营数据概览 · {definition.dateRange}</p></div><button type="button" className="flex h-8 items-center gap-1.5 rounded-md border border-[#DDE5F0] px-2.5 text-xs font-semibold text-[#526174] hover:border-[#2167E8] hover:text-[#2167E8]"><Settings2 className="h-3.5 w-3.5" />页面设置</button></div><div className="mt-5 flex flex-wrap items-center gap-2">{definition.filters.map((filter, index) => <button type="button" key={`${filter.label}-${index}`} onClick={() => setWorkingStatus(`筛选器“${filter.label}”已选中，可通过对话修改`)} className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DDE5F0] bg-[#FAFCFF] px-2.5 text-xs text-[#526174] hover:border-[#B8D1FA]"><span className="text-[#8A98AC]">{filter.label}</span><span>{filter.value}</span><ChevronDown className="h-3.5 w-3.5 text-[#98A2B3]" /></button>)}</div></div><div className="grid grid-cols-2 gap-3 bg-[#F8FAFD] p-5">{definition.widgets.filter((widget) => widget.type === "kpi").map((widget) => <button type="button" key={widget.id} onClick={() => setSelectedWidgetId(widget.id)} className={`min-w-0 overflow-hidden rounded-md border text-left shadow-[0_1px_2px_rgba(23,36,58,0.03)] ${selectedWidgetId === widget.id ? "border-[#73A7F4] ring-2 ring-[#2167E8]/10" : "border-[#E3EAF3]"}`}><WidgetPreview widget={widget} /></button>)}</div><div className="grid gap-3 bg-[#F8FAFD] px-5 pb-5 md:grid-cols-2">{definition.widgets.filter((widget) => widget.type !== "kpi").map((widget, index) => <button type="button" key={widget.id} onClick={() => setSelectedWidgetId(widget.id)} className={`min-w-0 overflow-hidden rounded-md border text-left shadow-[0_1px_2px_rgba(23,36,58,0.03)] ${widget.type === "table" || index === 0 ? "md:col-span-2" : ""} ${selectedWidgetId === widget.id ? "border-[#73A7F4] ring-2 ring-[#2167E8]/10" : "border-[#E3EAF3]"}`}><WidgetPreview widget={widget} /></button>)}</div><div className="border-t border-[#E7EDF5] bg-white px-5 py-4"><div className="flex items-center gap-2 text-[11px] text-[#8A98AC]"><Check className="h-3.5 w-3.5 text-[#16845B]" />数据已同步 · 最后更新今天 11:05</div></div></div></div>{error ? <div className="mx-auto mt-3 max-w-[1000px] rounded-md border border-[#F5D4CC] bg-[#FFF8F6] px-3 py-2 text-xs text-[#B42318]">{error}</div> : null}</main>
 
