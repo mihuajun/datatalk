@@ -21,3 +21,31 @@ reportEditLock:
 
 resourceCenter:
   enabled: "${RESOURCE_CENTER_ENABLED:false}"
+
+auth:
+  # When false, only username/password login remains available.
+  allowRegistration: "${ALLOW_REGISTRATION:true}"
+  github:
+    clientId: "${GITHUB_CLIENT_ID}"
+    clientSecret: "${GITHUB_CLIENT_SECRET}"
+    redirectUri: "${GITHUB_REDIRECT_URI:}"
+  google:
+    clientId: "${GOOGLE_CLIENT_ID}"
+    clientSecret: "${GOOGLE_CLIENT_SECRET}"
+    redirectUri: "${GOOGLE_REDIRECT_URI:}"
+
+email:
+  smtp:
+    host: "${SMTP_HOST}"
+    port: "${SMTP_PORT:465}"
+    user: "${SMTP_USER}"
+    password: "${SMTP_PASSWORD}"
+    from: "${SMTP_FROM}"
+    secure: "${SMTP_SECURE:true}"
+
+sms:
+  accessKeyId: "${ALIYUN_SMS_ACCESS_KEY_ID}"
+  accessKeySecret: "${ALIYUN_SMS_ACCESS_KEY_SECRET}"
+  signName: "${ALIYUN_SMS_SIGN_NAME}"
+  templateCode: "${ALIYUN_SMS_TEMPLATE_CODE}"
+  endpoint: "${ALIYUN_SMS_ENDPOINT:dysmsapi.aliyuncs.com}"

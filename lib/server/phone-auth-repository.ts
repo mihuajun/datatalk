@@ -5,8 +5,6 @@ import type { RowDataPacket } from "mysql2/promise";
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
 import { getDbPool } from "@/lib/server/mysql";
 
-export const DEMO_PHONE_CODE = "8888";
-
 type PhoneUserRow = RowDataPacket & {
   id: number;
   tenant_id: number;
@@ -65,11 +63,12 @@ export async function findOrCreatePhoneUser(phone: string) {
       [personalTenantCode(phone), tenantName],
     );
     const tenantId = Number((tenantResult as { insertId: number }).insertId);
+    const displayName = `用户${phone.slice(-4)}`;
     const [userResult] = await connection.execute(
       `INSERT INTO tenant_user
         (tenant_id, name, username, phone, email, role, password, salt, status, last_active)
        VALUES (?, ?, ?, ?, NULL, 'developer', '', NULL, 1, CURRENT_TIMESTAMP)`,
-      [tenantId, "个人用户", username, phone],
+      [tenantId, displayName, username, phone],
     );
     const userId = Number((userResult as { insertId: number }).insertId);
     await connection.commit();
@@ -77,7 +76,7 @@ export async function findOrCreatePhoneUser(phone: string) {
       userId,
       tenantId,
       username,
-      name: "个人用户",
+      name: displayName,
       role: "developer" as const,
       created: true,
     } satisfies PhoneAuthUser;

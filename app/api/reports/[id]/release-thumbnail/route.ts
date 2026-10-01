@@ -66,7 +66,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       return new NextResponse(content, {
         headers: {
           "Content-Type": candidate.contentType,
-          "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+          // Resource thumbnails are public, release-versioned assets. A new release or
+          // regenerated cover gets a different URL, so browsers can cache this safely.
+          "Cache-Control": isResourceThumbnail
+            ? "public, max-age=31536000, immutable"
+            : "private, no-store, max-age=0, must-revalidate",
         },
       });
     } catch {

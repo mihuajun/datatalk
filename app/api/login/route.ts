@@ -63,6 +63,7 @@ export async function POST(request: Request) {
   }
 
   const username = normalizeText(body?.username);
+  const account = username.toLowerCase();
   const password = normalizeText(body?.password);
 
   if (!username || !password) {
@@ -77,7 +78,10 @@ export async function POST(request: Request) {
 
   try {
     const pool = getDbPool();
-    const [rows] = await pool.query<TenantUserRow[]>("SELECT * FROM tenant_user WHERE username = ? LIMIT 1", [username]);
+    const [rows] = await pool.query<TenantUserRow[]>(
+      "SELECT * FROM tenant_user WHERE username = ? OR phone = ? OR LOWER(email) = ? LIMIT 1",
+      [username, username, account],
+    );
     const user = rows[0];
 
     if (!user?.tenant_id || !user.username || user.status === 0 || !verifyPassword(user, password)) {

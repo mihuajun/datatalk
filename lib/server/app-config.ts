@@ -32,6 +32,36 @@ export type AppConfig = {
   resourceCenter?: {
     enabled?: ConfigValue<boolean> | ConfigValue<string>;
   };
+  auth?: {
+    allowRegistration?: ConfigValue<boolean> | ConfigValue<string>;
+    github?: {
+      clientId?: ConfigValue<string>;
+      clientSecret?: ConfigValue<string>;
+      redirectUri?: ConfigValue<string>;
+    };
+    google?: {
+      clientId?: ConfigValue<string>;
+      clientSecret?: ConfigValue<string>;
+      redirectUri?: ConfigValue<string>;
+    };
+  };
+  email?: {
+    smtp?: {
+      host?: ConfigValue<string>;
+      port?: ConfigValue<string>;
+      user?: ConfigValue<string>;
+      password?: ConfigValue<string>;
+      from?: ConfigValue<string>;
+      secure?: ConfigValue<boolean> | ConfigValue<string>;
+    };
+  };
+  sms?: {
+    accessKeyId?: ConfigValue<string>;
+    accessKeySecret?: ConfigValue<string>;
+    signName?: ConfigValue<string>;
+    templateCode?: ConfigValue<string>;
+    endpoint?: ConfigValue<string>;
+  };
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

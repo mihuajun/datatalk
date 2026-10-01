@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS tenant_user (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS user_identity (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  provider_key TEXT NOT NULL,
+  provider_email TEXT,
+  verified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(provider, provider_key),
+  UNIQUE(user_id, provider)
+);
+
 CREATE TABLE IF NOT EXISTS tenant_report_folder (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL,

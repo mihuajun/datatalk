@@ -2,9 +2,14 @@ import { redirect } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
+import { AuthVisual } from "@/components/auth/auth-visual";
+import { AuthBrand } from "@/components/auth/auth-brand";
 import { ExternalReturn } from "@/components/auth/external-return";
 import { getAuthSession } from "@/lib/server/auth-session";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
+import { isGitHubConfigured } from "@/lib/server/github-auth";
+import { isGoogleConfigured } from "@/lib/server/google-auth";
+import { isRegistrationEnabled } from "@/lib/server/auth-config";
 
 function DataTalkLogo() {
   return (
@@ -111,26 +116,20 @@ export default async function HomePage({ searchParams }: { searchParams?: Promis
         <div className="absolute -bottom-12 right-[-120px] h-[3px] w-[620px] rotate-[-18deg] rounded-full bg-white/45" />
       </div>
 
-      <div className="relative mx-auto flex min-h-screen max-w-[1216px] items-center px-5 py-10 sm:px-8 lg:px-0">
-        <div className="grid w-full items-center gap-12 lg:grid-cols-[438px_minmax(0,1fr)] lg:gap-[75px]">
-          <section className="min-h-0 w-full max-w-[438px] justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-9 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:px-[50px] sm:py-11 lg:min-h-[540px] lg:justify-self-start">
-            <div className="flex items-center gap-4">
-              <DataTalkLogo />
-              <div className="min-w-0">
-                <div className="text-xl font-extrabold tracking-[-0.02em] text-[#17243A]">DataTalk</div>
-                <div className="mt-1 text-[11px] font-semibold text-[#71819B]">用对话完成报表开发</div>
-              </div>
-            </div>
+      <div className="relative mx-auto flex min-h-screen w-full min-w-0 max-w-[1216px] items-center px-5 py-10 sm:px-8 lg:px-0">
+        <div className="grid min-w-0 w-full grid-cols-1 items-center gap-12 lg:grid-cols-[438px_minmax(0,1fr)] lg:gap-[75px]">
+          <section style={{ width: "calc(100vw - 2.5rem)", maxWidth: "438px" }} className="min-h-0 min-w-0 justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-9 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:w-full sm:px-[50px] sm:py-11 lg:min-h-[540px] lg:justify-self-start">
+            <AuthBrand />
 
-            <div className="mt-10 flex items-center">
+            <div className="mt-8 flex items-center">
               <h1 className="text-[30px] font-bold leading-none tracking-[-0.04em] text-[#17243A]">登录工作台</h1>
             </div>
 
-            <LoginForm returnTo={next} />
+            <LoginForm returnTo={next} registrationEnabled={isRegistrationEnabled()} githubEnabled={isGitHubConfigured()} googleEnabled={isGoogleConfigured()} />
           </section>
 
-          <section className="hidden min-w-0 lg:block" aria-label="DataTalk 产品预览">
-            <ReportPreview />
+          <section className="min-w-0" aria-label="DataTalk 产品介绍">
+            <AuthVisual mode="login" />
           </section>
         </div>
       </div>

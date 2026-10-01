@@ -1394,7 +1394,7 @@ function AiChatPanel({
                 icon={toolOperationIcon(node.name, node.status)}
                 title={node.name}
                 summary={node.summary || (node.status === "running" ? "执行中" : node.status === "done" ? "已完成" : "执行失败")}
-                detail={node.detail || node.summary}
+                detail={isSkillTool(node.name) ? undefined : node.detail || node.summary}
               />
               {node.images?.length ? <div className="ml-6 mt-2 min-w-0 space-y-2">
                 {node.images.map((image) => {
@@ -1727,6 +1727,15 @@ function toolOperationIcon(name: string, status: "running" | "done" | "error") {
   return <Icon className={`h-3.5 w-3.5 ${color}`} />;
 }
 
+function isSkillTool(name: string) {
+  return name.trim().toLowerCase() === "skill";
+}
+
+function skillToolName(argumentsValue: unknown) {
+  const args = parseToolArguments(argumentsValue);
+  return args ? firstStringValue(args.name) : "";
+}
+
 function commandOperationIcon(status: "running" | "success" | "error") {
   const color = status === "running" ? "text-[#2167E8] animate-pulse" : status === "error" ? "text-[#F97066]" : "text-[#32D583]";
   return <Terminal className={`h-3.5 w-3.5 ${color}`} />;
@@ -1735,6 +1744,7 @@ function commandOperationIcon(status: "running" | "success" | "error") {
 function summarizeToolCall(name: string, argumentsValue: unknown) {
   const raw = typeof argumentsValue === "string" ? argumentsValue : "";
   const args = parseToolArguments(raw);
+  if (isSkillTool(name)) return skillToolName(argumentsValue) || "执行中";
   if (!args) return displayWorkingPathReferences(firstStringValue(raw));
 
   const preferredKeys = name === "read"
@@ -2033,9 +2043,10 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
         if (eventData?.callId) runningTools.set(eventData.callId, index);
         continue;
       }
+      const isSkill = isSkillTool(name);
       const input = formatFileToolArguments(name, eventData?.arguments);
       const summary = summarizeToolCall(name, eventData?.arguments);
-      const detail = combineToolDetail(input, undefined);
+      const detail = isSkill ? undefined : combineToolDetail(input, undefined);
       const index = timeline.push({ id: `tool-${eventData?.callId || "event"}-${eventKey}`, kind: "tool", name, status: "running", summary, detail, time: eventTime }) - 1;
       if (eventData?.callId) runningTools.set(eventData.callId, index);
       continue;
@@ -2045,6 +2056,7 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
       const callId = eventData?.callId || eventData?.message?.source?.callId;
       const existingNode = callId && runningTools.has(callId) ? timeline[runningTools.get(callId)!] : undefined;
       const resultToolName = existingNode?.kind === "tool" ? existingNode.name : eventData?.name || "工具调用";
+      const isSkill = isSkillTool(resultToolName);
       const rawOutput = runtimeToolResultText(eventData) || stringifyToolPayload(eventData?.meta);
       const output = isFileReadWriteTool(resultToolName) ? displayWorkingPathReferences(rawOutput) : rawOutput;
       const outputSummary = summarizeToolPayload(output);
@@ -2067,8 +2079,8 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
           timeline[index] = {
             ...current,
             status,
-            summary: status === "error" && outputSummary ? outputSummary : current.summary,
-            detail: appendToolResult(current.detail, output),
+            summary: isSkill ? (status === "error" ? `${current.summary || "skill"} · 执行失败` : current.summary) : status === "error" && outputSummary ? outputSummary : current.summary,
+            detail: isSkill ? undefined : appendToolResult(current.detail, output),
             ...(images.length ? { images } : {}),
             time: eventTime,
           };
@@ -2080,8 +2092,8 @@ function foldTimeline(events: RuntimeEventPayload[], sentImagePreviews: SentAiIm
           kind: "tool",
           name: resultToolName,
           status,
-          summary: outputSummary,
-          detail: combineToolDetail(undefined, output),
+          summary: isSkill ? (status === "error" ? "执行失败" : "执行完成") : outputSummary,
+          detail: isSkill ? undefined : combineToolDetail(undefined, output),
           ...(images.length ? { images } : {}),
           time: eventTime,
         });

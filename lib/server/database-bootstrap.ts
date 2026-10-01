@@ -179,6 +179,25 @@ async function ensureTenantUserTable(connection: Connection) {
   );
 }
 
+async function ensureUserIdentityTable(connection: Connection) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS user_identity (
+      id bigint unsigned NOT NULL AUTO_INCREMENT,
+      user_id bigint unsigned NOT NULL,
+      provider varchar(40) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      provider_key varchar(190) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      provider_email varchar(160) NULL,
+      verified_at timestamp NULL,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_user_identity_provider_key (provider, provider_key),
+      UNIQUE KEY uq_user_identity_user_provider (user_id, provider),
+      KEY idx_user_identity_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+}
+
 async function ensureReportTables(connection: Connection) {
   await connection.query(`
     CREATE TABLE IF NOT EXISTS tenant_report_folder (
@@ -784,6 +803,7 @@ async function runBootstrap() {
   try {
     await ensureTenantTable(connection);
     await ensureTenantUserTable(connection);
+    await ensureUserIdentityTable(connection);
     await ensureReportTables(connection);
     await ensureResourceTables(connection);
     await ensureDataSourceTables(connection);

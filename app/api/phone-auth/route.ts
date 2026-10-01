@@ -1,21 +1,27 @@
 import { NextResponse } from "next/server";
 
 import { encodeAuthSession } from "@/lib/server/auth-session";
-import { DEMO_PHONE_CODE, findOrCreatePhoneUser } from "@/lib/server/phone-auth-repository";
+import { findOrCreatePhoneUser } from "@/lib/server/phone-auth-repository";
+import { consumePhoneCode, isSmsConfigured } from "@/lib/server/sms-auth";
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
+import { isRegistrationEnabled } from "@/lib/server/auth-config";
 
 function isPhone(value: unknown): value is string {
   return typeof value === "string" && /^1\d{10}$/.test(value.trim());
 }
 
 export async function POST(request: Request) {
+  if (!isRegistrationEnabled()) return NextResponse.json({ success: false, message: "非账号密码登录功能已关闭。" }, { status: 403 });
   const body = await request.json().catch(() => ({})) as { phone?: unknown; code?: unknown; returnTo?: unknown };
   const phone = typeof body.phone === "string" ? body.phone.trim() : "";
   const code = typeof body.code === "string" ? body.code.trim() : "";
 
   if (!isPhone(phone)) return NextResponse.json({ success: false, message: "请输入正确的手机号。" }, { status: 400 });
-  if (code !== DEMO_PHONE_CODE) return NextResponse.json({ success: false, message: "验证码不正确，请输入 8888。" }, { status: 401 });
+  if (!consumePhoneCode(phone, code)) {
+    const message = isSmsConfigured() ? "验证码不正确或已过期。" : "验证码不正确，请重新获取验证码。";
+    return NextResponse.json({ success: false, message }, { status: 401 });
+  }
 
   try {
     const user = await findOrCreatePhoneUser(phone);

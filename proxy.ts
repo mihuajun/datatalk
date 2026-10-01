@@ -3,12 +3,12 @@ import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
 
-const publicPaths = new Set(["/", "/icon.svg"]);
+const publicPaths = new Set(["/", "/register", "/reset-password", "/terms", "/privacy", "/icon.svg"]);
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (publicPaths.has(pathname) || pathname.startsWith("/link/") || pathname.startsWith("/share/") || pathname.startsWith("/vendor/")) {
+  if (publicPaths.has(pathname) || pathname.startsWith("/auth/") || pathname.startsWith("/link/") || pathname.startsWith("/share/") || pathname.startsWith("/vendor/")) {
     return NextResponse.next();
   }
 

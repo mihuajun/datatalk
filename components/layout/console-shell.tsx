@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useState } from "react";
 import {
   BarChart3,
@@ -28,6 +28,7 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
   const pathname = usePathname();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const visibleNavItems = navItems.filter(({ href }) => {
     if (href === "/settings") return session ? isAdministratorRole(session.role) : false;
     if (href === "/members") return session ? canAccessMembersRole(session.role) : false;
@@ -40,6 +41,7 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
   const isPublicReportPage = pathname.startsWith("/link/") || pathname.startsWith("/share/");
 
   async function handleLogout() {
+    setUserMenuOpen(false);
     setLoggingOut(true);
 
     try {
@@ -51,6 +53,10 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
       console.error("Logout request failed", error);
       setLoggingOut(false);
     }
+  }
+
+  function handleUserMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") setUserMenuOpen(false);
   }
 
   if (isReportEditorPage) {
@@ -99,20 +105,43 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
         </div>
 
         {session ? (
-          <button
-            type="button"
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="mx-0 mt-auto flex min-h-[66px] w-full items-center gap-2.5 rounded-[9px] border border-white/5 bg-white/[.06] px-3 text-left transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#74a7ff]/50 disabled:cursor-wait disabled:opacity-60"
-            aria-label={loggingOut ? "退出中" : `退出登录，当前用户 ${session.name || session.username}`}
-            title={loggingOut ? "退出中" : "退出登录"}
+          <div
+            className="relative mx-0 mt-auto"
+            onKeyDown={handleUserMenuKeyDown}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setUserMenuOpen(false);
+            }}
           >
-            <span className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full bg-[#e3edff] text-xs font-bold text-[#2167E8]">
-              {(session.name || session.username).slice(0, 1)}
-            </span>
-            <span className="min-w-0 flex-1 truncate"><span className="block text-sm font-semibold text-white">{session.name || session.username}</span><span className="mt-0.5 block text-[11px] text-[#8b9ab1]">{getUserRoleLabel(session.role)}</span></span>
-            <ChevronDown className="h-4 w-4 text-[#9aabc4]" />
-          </button>
+            {userMenuOpen ? (
+              <div className="absolute bottom-[calc(100%+10px)] left-0 z-30 w-full rounded-[9px] border border-white/10 bg-[#1c2b43] p-1.5 shadow-[0_14px_32px_rgba(0,0,0,0.26)]" role="menu" aria-label="用户菜单">
+                <div className="border-b border-white/10 px-3 py-2.5 text-xs text-[#9aabc4]">已登录为 {session.name || session.username}</div>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  disabled={loggingOut}
+                  className="mt-1 flex h-10 w-full items-center rounded-[7px] px-3 text-left text-[13px] font-medium text-[#f2c4ca] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#74a7ff]/50 disabled:cursor-wait disabled:opacity-60"
+                  role="menuitem"
+                >
+                  {loggingOut ? "退出中" : "退出登录"}
+                </button>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setUserMenuOpen((open) => !open)}
+              disabled={loggingOut}
+              className="flex min-h-[66px] w-full items-center gap-2.5 rounded-[9px] border border-white/5 bg-white/[.06] px-3 text-left transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#74a7ff]/50 disabled:cursor-wait disabled:opacity-60"
+              aria-expanded={userMenuOpen}
+              aria-haspopup="menu"
+              aria-label={`打开用户菜单，当前用户 ${session.name || session.username}`}
+            >
+              <span className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full bg-[#e3edff] text-xs font-bold text-[#2167E8]">
+                {(session.name || session.username).slice(0, 1)}
+              </span>
+              <span className="min-w-0 flex-1 truncate"><span className="block text-sm font-semibold text-white">{session.name || session.username}</span><span className="mt-0.5 block text-[11px] text-[#8b9ab1]">{getUserRoleLabel(session.role)}</span></span>
+              <ChevronDown className={`h-4 w-4 text-[#9aabc4] transition-transform ${userMenuOpen ? "rotate-180" : ""}`} />
+            </button>
+          </div>
         ) : null}
       </aside>
 

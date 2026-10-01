@@ -129,6 +129,8 @@ config/config.yaml
 
 推荐使用环境变量配置敏感信息。最小开发配置不需要填写数据库变量；应用会回退到 SQLite。
 
+本地开发也可以统一使用被 Git 忽略的 `config/config.local.yaml`。该文件会覆盖 `config/config.yaml`，认证、短信和邮件配置优先从这里读取；环境变量仍作为部署环境的兼容回退方式。
+
 ### 常用环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -141,6 +143,23 @@ config/config.yaml
 | `WORKSPACE_STORAGE_ROOT` | 默认工作区路径 | 覆盖报表工作文件、运行时状态和本地数据库的存储根目录 |
 | `AUTH_SESSION_SECRET` | 自动生成 | 多实例部署时应显式设置并在实例间保持一致 |
 | `AUTH_COOKIE_DOMAIN` | 空 | 跨子域共享登录 Cookie 时设置 |
+| `ALIYUN_SMS_ACCESS_KEY_ID` | 空 | 阿里云短信服务端 AccessKey ID；不要提交到仓库 |
+| `ALIYUN_SMS_ACCESS_KEY_SECRET` | 空 | 阿里云短信服务端 AccessKey Secret；不要提交到仓库 |
+| `ALIYUN_SMS_SIGN_NAME` | 空 | 已审核通过的阿里云短信签名 |
+| `ALIYUN_SMS_TEMPLATE_CODE` | 空 | 已审核通过的阿里云短信模板 CODE，例如 `13012345678` |
+| `ALIYUN_SMS_ENDPOINT` | `dysmsapi.aliyuncs.com` | 可选的阿里云短信 API Endpoint |
+| `SMTP_HOST` | 空 | 邮件服务 SMTP 主机；邮箱注册必填 |
+| `SMTP_PORT` | `465` | SMTP 端口，常见为 `465` 或 `587` |
+| `SMTP_USER` | 空 | SMTP 登录账号 |
+| `SMTP_PASSWORD` | 空 | SMTP 登录密码或授权码；不要提交到仓库 |
+| `SMTP_FROM` | 空 | 验证码发件人地址，必须显式配置 |
+| `SMTP_SECURE` | 端口为 `465` 时为 `true` | 是否使用 TLS 直连 |
+| `GITHUB_CLIENT_ID` | 空 | GitHub OAuth App 的 Client ID |
+| `GITHUB_CLIENT_SECRET` | 空 | GitHub OAuth App 的 Client Secret；不要提交到仓库 |
+| `GITHUB_REDIRECT_URI` | 当前请求域名下的 `/api/auth/github/callback` | 可选；生产环境建议显式配置完整回调地址 |
+| `GOOGLE_CLIENT_ID` | 空 | Google OAuth 客户端 ID |
+| `GOOGLE_CLIENT_SECRET` | 空 | Google OAuth 客户端 Secret；不要提交到仓库 |
+| `GOOGLE_REDIRECT_URI` | 当前请求域名下的 `/api/auth/google/callback` | 可选；生产环境建议显式配置完整回调地址 |
 | `PUBLIC_LINK_SECRET` | 自动生成 | 公开链接访问 Cookie 的签名密钥；多实例部署时应保持一致 |
 | `REPORT_AGENT_TOOL_SECRET` | 自动生成 | Agent 工具令牌签名密钥；多实例部署时应保持一致 |
 | `REPORT_EDIT_LOCK_ENABLED` | `false` | 是否启用报表编辑锁 |
@@ -157,11 +176,23 @@ export DATABASE_URL='jdbc:mysql://127.0.0.1:3306/datatalk_studio?useUnicode=true
 export DATABASE_USERNAME=datatalk
 export DATABASE_PASSWORD='change-me'
 export AUTH_SESSION_SECRET='replace-with-a-long-random-value'
+export ALIYUN_SMS_ACCESS_KEY_ID='your-access-key-id'
+export ALIYUN_SMS_ACCESS_KEY_SECRET='your-access-key-secret'
+export ALIYUN_SMS_SIGN_NAME='your-approved-sign-name'
+export ALIYUN_SMS_TEMPLATE_CODE='13012345678'
 
 npm run dev
 ```
 
 不要把上面的实际密码、生产域名、客户连接串或模型 API Key 写进 `config/config.yaml`、README、Issue 或提交记录。
+
+手机号登录通过服务端调用阿里云 SMS `SendSms` API，短信模板通过 `ALIYUN_SMS_TEMPLATE_CODE` 配置。验证码有效期为 5 分钟，同一手机号 60 秒内不能重复发送，单个验证码最多校验 5 次。未配置阿里云短信时，开发环境可以继续联调发送流程但不会真的发短信；生产环境会返回短信服务未配置。验证码当前保存在 Node 实例内，多实例部署时应在实例间增加 Redis 或数据库验证码存储。
+
+注册页支持手机号注册和邮箱注册。手机号注册使用阿里云短信验证码，邮箱注册使用 SMTP 验证码；注册完成后，两种账号都可以使用对应的手机号或邮箱加密码登录，也可以继续使用用户名登录。邮箱注册在 SMTP 未配置时会明确返回邮箱服务未配置，不会伪造发送成功。
+
+GitHub 登录使用 OAuth App。配置 `GITHUB_CLIENT_ID` 和 `GITHUB_CLIENT_SECRET` 后，登录页会启用 GitHub 按钮；回调地址为 `/api/auth/github/callback`，权限范围为 `read:user user:email`。GitHub 身份会记录在 `user_identity` 表中：已有相同邮箱的账号会绑定 GitHub 身份，没有匹配账号时会自动创建个人工作台。
+
+Google 登录使用 OAuth 2.0 / OpenID Connect。配置 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET` 后，登录页会启用 Google 按钮；回调地址为 `/api/auth/google/callback`，权限范围为 `openid email profile`。Google 身份使用稳定的 `sub` 保存，只有已验证邮箱才允许绑定或创建账号。
 
 ## Docker 部署
 
