@@ -18,6 +18,19 @@ DataTalk Studio is the open-source report workspace from DataTalk. Visit the web
 
 The DataTalk website and enterprise services are being developed around `datatalk-web`, enterprise SaaS, and private deployment offerings. This open-source repository focuses on Studio capabilities and engineering implementation.
 
+## Contact and Community
+
+We welcome product feedback, usage questions, contribution ideas, and discussions about reports, data analysis, and private deployment:
+
+- **Email**: [kobe96688@126.com](mailto:kobe96688@126.com)
+- **WeChat**: Scan the QR code below to connect with Micah, join the community, and discuss DataTalk usage or collaboration.
+
+<p align="center">
+  <img src="docs/contact-wechat.jpg" alt="DataTalk WeChat contact QR code" width="260" />
+</p>
+
+When contacting us, including your use case, the problem you encountered, and a minimal reproducible example helps us respond more quickly. Do not send passwords, API keys, database credentials, or customer data.
+
 ## Screenshots
 
 The following screenshots show the main Studio workflow:

@@ -18,6 +18,19 @@ DataTalk Studio 是 DataTalk 的开源报表工作台。你可以先在官网浏
 
 DataTalk 的官网和后续企业服务将围绕 `datatalk-web`、企业 SaaS 和私有化部署持续建设。开源仓库主要聚焦 Studio 的产品能力和工程实现；企业客户可通过[官网产品与应用场景页面](https://datatalk.alenfive.top/product?utm_source=github&utm_medium=readme&utm_campaign=datatalk-studio)了解最新服务形态、行业方案和部署选项。
 
+## 联系我们与加入社群
+
+欢迎交流 DataTalk 的产品使用、报表实践、问题反馈、开源贡献、企业分析场景和私有化部署合作：
+
+- **邮箱**：[kobe96688@126.com](mailto:kobe96688@126.com)
+- **微信**：扫描下方二维码添加 Micah，可加入社群，交流 DataTalk 使用经验、产品想法和合作需求。
+
+<p align="center">
+  <img src="docs/contact-wechat.jpg" alt="DataTalk 联系微信二维码" width="260" />
+</p>
+
+联系时如果能一并提供使用场景、遇到的问题和最小复现信息，我们可以更快定位和回复。请不要发送密码、API Key、数据库凭据或客户数据。
+
 ## 界面预览
 
 以下截图来自 DataTalk 官网展示的当前产品界面，帮助你在阅读代码和启动项目之前，先直观看到 Studio 的主要工作流：
