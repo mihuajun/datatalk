@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { StatusBadge } from "@/components/shared/status-badge";
+import { SystemTimeZoneCard } from "@/components/settings/system-timezone-card";
 
 type AgentRuntimeState = "not_installed" | "installing" | "installed" | "running";
 type AgentRuntimeAction = "install" | "start" | "restart" | "stop";
@@ -311,6 +312,8 @@ export function AgentRuntimeSettings({ initialRuntimeWebUrl }: { initialRuntimeW
               ) : null}
             </section>
           ) : null}
+
+          <SystemTimeZoneCard />
         </main>
       </div>
     </div>

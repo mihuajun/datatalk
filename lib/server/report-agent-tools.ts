@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { RowDataPacket } from "mysql2/promise";
 
+import { parseStoredDate } from "@/lib/server/db-time";
 import { getDbPool } from "@/lib/server/mysql";
 import { getDataSourceCredentialsByRef, listDataSources } from "@/lib/server/data-source-repository";
 import { getReportDataSourceAdapter } from "@/lib/server/report-data-source-adapter";
@@ -160,7 +161,7 @@ type ReferenceReportRow = RowDataPacket & {
 };
 
 function normalizeReferenceReport(row: ReferenceReportRow, currentReportCode?: string) {
-  const updatedAt = row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+  const updatedAt = parseStoredDate(row.updated_at);
   return {
     code: row.code,
     name: row.name,

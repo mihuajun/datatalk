@@ -1,6 +1,8 @@
 import type { RowDataPacket } from "mysql2/promise";
 
+import { parseStoredDate } from "@/lib/server/db-time";
 import { getDbPool } from "@/lib/server/mysql";
+import { getSystemTimeZone } from "@/lib/server/system-settings";
 
 export const DATA_SOURCE_TYPES = [
   "MySQL", "PostgreSQL", "MariaDB", "SQL Server", "Oracle", "SQLite", "TiDB", "OceanBase",
@@ -41,10 +43,16 @@ type DataSourceRow = RowDataPacket & {
   updated_at: string | Date;
 };
 
+function formatStoredTimestamp(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const parsed = parseStoredDate(value);
+  return Number.isNaN(parsed.getTime())
+    ? String(value)
+    : parsed.toLocaleString("zh-CN", { hour12: false, timeZone: getSystemTimeZone() });
+}
+
 function normalize(row: DataSourceRow): DataSourceRecord {
-  const updatedAt = row.updated_at instanceof Date
-    ? row.updated_at.toLocaleString("zh-CN", { hour12: false })
-    : row.updated_at;
+  const updatedAt = formatStoredTimestamp(row.updated_at);
   return {
     id: Number(row.id),
     name: row.name,
