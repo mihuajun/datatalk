@@ -22,5 +22,5 @@ export async function OPTIONS(request: Request) {
 export async function GET(request: Request) {
   const session = await getAuthSession();
   if (!session) return withCors(NextResponse.json({ message: "未登录" }, { status: 401 }), request);
-  return withCors(NextResponse.json({ favorites: await listMyFavorites(session.userId) }), request);
+  return withCors(NextResponse.json({ favorites: await listMyFavorites(session.userId), webAppUrl: getWebAppUrl() }), request);
 }

@@ -57,10 +57,12 @@ async function getFavoriteCount(tenantId: number, sourceCode: string) {
 }
 
 export async function listMyFavorites(userId: number) {
-  const [rows] = await getDbPool().query<Array<FavoriteRow & { title: string; summary: string | null; created_at: string }>>(
-    `SELECT f.source_code, ri.title, ri.summary, f.created_at
-       FROM resource_favorite f INNER JOIN resource_item ri ON ri.tenant_id = f.tenant_id AND ri.asset_type = f.asset_type AND ri.source_code = f.source_code
+  const [rows] = await getDbPool().query<Array<FavoriteRow & { asset_type: string; title: string; summary: string | null; source_tenant_name: string | null; created_at: string }>>(
+    `SELECT f.source_code, f.asset_type, ri.title, ri.summary, t.name AS source_tenant_name, f.created_at
+       FROM resource_favorite f
+       INNER JOIN resource_item ri ON ri.tenant_id = f.tenant_id AND ri.asset_type = f.asset_type AND ri.source_code = f.source_code
+       LEFT JOIN tenant t ON t.id = f.tenant_id
       WHERE f.user_id = ? ORDER BY f.created_at DESC`, [userId],
   );
-  return rows.map((row) => ({ code: row.source_code, title: row.title, summary: row.summary, createdAt: row.created_at }));
+  return rows.map((row) => ({ code: row.source_code, type: row.asset_type, title: row.title, summary: row.summary, sourceTenantName: row.source_tenant_name, createdAt: row.created_at }));
 }

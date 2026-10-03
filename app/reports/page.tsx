@@ -35,6 +35,26 @@ function containsFolder(folders: ReportFolder[], id: string) {
   return Boolean(findFolder(folders, id));
 }
 
+function formatDisplayDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const oneDay = 24 * 60 * 60 * 1000;
+
+  if (startOfDate === startOfToday) return `今天 ${time}`;
+  if (startOfDate === startOfToday - oneDay) return `昨天 ${time}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+}
+
+function getFavoriteResourceHref(webAppUrl: string, favorite: { code: string; type: string }) {
+  const resourcePath = favorite.type === "template" ? "templates" : "reports";
+  return `${webAppUrl.replace(/\/$/, "")}/${resourcePath}/${encodeURIComponent(favorite.code)}`;
+}
+
 function FolderTree({
   folders,
   selected,
@@ -152,6 +172,7 @@ export default function ReportsPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"全部" | ReportStatus>("全部");
   const [loading, setLoading] = useState(true);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -163,20 +184,22 @@ export default function ReportsPage() {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [reportMenuCode, setReportMenuCode] = useState<string | null>(null);
   const [showFavorites, setShowFavorites] = useState(false);
-  const [favorites, setFavorites] = useState<Array<{ code: string; title: string; summary: string | null; createdAt: string }>>([]);
+  const [webAppUrl, setWebAppUrl] = useState("");
+  const [favorites, setFavorites] = useState<Array<{ code: string; type: string; title: string; summary: string | null; sourceTenantName: string | null; createdAt: string }>>([]);
 
   const loadFavorites = useCallback(async () => {
-    setLoading(true);
+    setFavoritesLoading(true);
     setError("");
     try {
       const response = await fetch("/api/favorites", { headers: { Accept: "application/json" }, cache: "no-store" });
-      const result = await response.json() as { favorites?: Array<{ code: string; title: string; summary: string | null; createdAt: string }>; message?: string };
+      const result = await response.json() as { favorites?: Array<{ code: string; type: string; title: string; summary: string | null; sourceTenantName: string | null; createdAt: string }>; webAppUrl?: string; message?: string };
       if (!response.ok || !result.favorites) throw new Error(result.message || "收藏数据暂时不可用");
       setFavorites(result.favorites);
+      if (result.webAppUrl) setWebAppUrl(result.webAppUrl);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "收藏数据暂时不可用");
     } finally {
-      setLoading(false);
+      setFavoritesLoading(false);
     }
   }, []);
 
@@ -260,6 +283,11 @@ export default function ReportsPage() {
       else next.add(id);
       return next;
     });
+  }
+
+  function selectFolder(id: string) {
+    setShowFavorites(false);
+    setSelected(id);
   }
 
   async function createFolder(parentId: string | null = null) {
@@ -446,27 +474,18 @@ export default function ReportsPage() {
           <div className="border-t border-[#EEF2F7] pt-3">
             <button
               type="button"
-              onClick={() => defaultFolder && setSelected(defaultFolder.id)}
-              disabled={!defaultFolder}
-              className="mb-1 flex h-[42px] w-full items-center gap-2 rounded-md border border-transparent bg-[#FFF8ED] px-2 text-left text-[13px] font-extrabold text-[#C45A11] hover:bg-[#FFF4DF] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <FolderOpen className="h-4 w-4 shrink-0 text-[#D97706]" />
-              <span className="truncate">我的订阅 ({defaultFolder?.reportCount ?? 0})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => { setShowFavorites(true); void loadFavorites(); }}
+              onClick={() => { setShowFavorites(true); setSelected(null); void loadFavorites(); }}
               className={`mb-1 flex h-[42px] w-full items-center gap-2 rounded-md border px-2 text-left text-[13px] font-semibold ${showFavorites ? "border-[#D7E5FF] bg-[#EDF3FF] text-[#2167E8]" : "border-transparent text-[#526174] hover:bg-white"}`}
             >
               <Star className="h-4 w-4 shrink-0" />
               <span className="truncate">我的收藏</span>
             </button>
-            {loading ? (
+            {loading && !showFavorites ? (
               <div className="space-y-2 px-2 py-3" aria-label="正在加载报表目录">
                 {["w-11/12", "w-8/12", "w-10/12"].map((width) => <div key={width} className={`h-8 animate-pulse rounded-md bg-[#E9EEF6] ${width}`} />)}
               </div>
             ) : folders.length ? (
-              <FolderTree folders={folders} selected={selected} expanded={expanded} onSelect={setSelected} onToggle={toggleFolder} menuOpenId={menuOpenId} onMenuToggle={(id) => setMenuOpenId((previous) => previous === id ? null : id)} onCreateChild={(id) => void createFolder(id)} onRename={(folder) => void renameFolder(folder)} onCreateReport={(folder) => void createReport(folder)} onDelete={(folder) => void deleteFolder(folder)} />
+              <FolderTree folders={folders} selected={selected} expanded={expanded} onSelect={selectFolder} onToggle={toggleFolder} menuOpenId={menuOpenId} onMenuToggle={(id) => setMenuOpenId((previous) => previous === id ? null : id)} onCreateChild={(id) => void createFolder(id)} onRename={(folder) => void renameFolder(folder)} onCreateReport={(folder) => void createReport(folder)} onDelete={(folder) => void deleteFolder(folder)} />
             ) : null}
           </div>
         </aside>
@@ -478,33 +497,37 @@ export default function ReportsPage() {
               <span className="rounded-full bg-[#EDF3FF] px-2.5 py-1 text-[11px] font-semibold text-[#2167E8]">{showFavorites ? favorites.length : current?.reportCount ?? 0} 张报表</span>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => void loadReports(true)} disabled={loading || refreshing} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-md border border-[#DDE5F0] text-[#526174] hover:border-[#2167E8] hover:text-[#2167E8] disabled:cursor-wait disabled:opacity-50" aria-label="刷新报表数据" title="刷新报表数据">
+              <button type="button" onClick={() => showFavorites ? void loadFavorites() : void loadReports(true)} disabled={loading || refreshing || favoritesLoading} className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-md border border-[#DDE5F0] text-[#526174] hover:border-[#2167E8] hover:text-[#2167E8] disabled:cursor-wait disabled:opacity-50" aria-label="刷新报表数据" title="刷新报表数据">
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               </button>
-              <button
-                type="button"
-                onClick={() => createReportTarget && void createReport(createReportTarget)}
-                disabled={loading || creating || !createReportTarget}
-                className="inline-flex h-[38px] items-center gap-2 rounded-md bg-[#2167E8] px-3 text-xs font-semibold text-white shadow-[0_6px_14px_rgba(33,103,232,0.18)] transition hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
-                创建报表
-              </button>
+              {!showFavorites ? (
+                <button
+                  type="button"
+                  onClick={() => createReportTarget && void createReport(createReportTarget)}
+                  disabled={loading || creating || !createReportTarget}
+                  className="inline-flex h-[38px] items-center gap-2 rounded-md bg-[#2167E8] px-3 text-xs font-semibold text-white shadow-[0_6px_14px_rgba(33,103,232,0.18)] transition hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {creating ? <RefreshCw className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
+                  创建报表
+                </button>
+              ) : null}
             </div>
           </div>
 
           <div className="flex min-h-[46px] flex-wrap items-center justify-between gap-3 border-b border-[#E7EDF5] bg-[#F8FAFD] px-3 py-2">
             <label className="relative block"><span className="sr-only">搜索报表</span><Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#A4AEC0]" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="h-8 w-[260px] max-w-full rounded-md border border-[#DDE5F0] bg-white pl-8 pr-3 text-xs outline-none placeholder:text-[#98A2B3] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10" placeholder="搜索报表名称 / 编码" /></label>
-            <div className="flex items-center gap-1">
-              {(["全部", "已发布", "草稿"] as const).map((item) => <button key={item} type="button" onClick={() => setStatus(item)} className={`rounded-md px-3 py-1.5 text-[12px] ${status === item ? "bg-[#EDF3FF] font-semibold text-[#2167E8]" : "text-[#526174] hover:bg-white"}`}>{item}</button>)}
-            </div>
+            {!showFavorites ? (
+              <div className="flex items-center gap-1">
+                {(["全部", "已发布", "草稿"] as const).map((item) => <button key={item} type="button" onClick={() => setStatus(item)} className={`rounded-md px-3 py-1.5 text-[12px] ${status === item ? "bg-[#EDF3FF] font-semibold text-[#2167E8]" : "text-[#526174] hover:bg-white"}`}>{item}</button>)}
+              </div>
+            ) : null}
           </div>
 
           {error ? <div className="flex items-center justify-between gap-3 border-b border-[#F5D4CC] bg-[#FFF8F6] px-4 py-3 text-xs text-[#B42318]"><span>{error}</span><button type="button" onClick={() => void loadReports()} className="font-semibold underline">重试</button></div> : notice ? <div className="border-b border-[#B7E4CB] bg-[#F2FBF5] px-4 py-3 text-xs text-[#16845B]">{notice}</div> : null}
 
           <div className="overflow-x-auto bg-white">
-            {loading ? <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">正在加载报表数据...</div> : showFavorites ? favorites.length ? (
-              <table className="data-table min-w-[700px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="px-4">摘要</th><th className="w-[150px] px-4">收藏时间</th><th className="w-[100px] px-4">操作</th></tr></thead><tbody>{favorites.map((favorite, index) => <tr key={favorite.code} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#FFF8ED] text-[#D97706]"><Star className="h-4 w-4" /></span>{favorite.title}</div><div className="mt-1 pl-9 text-[11px] text-[#8A98AC]">{favorite.code}</div></td><td className="max-w-[320px] truncate px-4 text-[#526174]">{favorite.summary || "—"}</td><td className="px-4 text-[#526174]">{favorite.createdAt}</td><td className="px-4"><button type="button" onClick={() => window.open(`/view/${encodeURIComponent(favorite.code)}`, "_blank", "noopener,noreferrer")} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button></td></tr>)}</tbody></table>
+            {loading || (showFavorites && favoritesLoading) ? <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">正在加载报表数据...</div> : showFavorites ? favorites.length ? (
+              <table className="data-table min-w-[900px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="min-w-[220px] px-4">名称</th><th className="w-[120px] px-4">类型</th><th className="w-[180px] px-4">来源</th><th className="px-4">摘要</th><th className="w-[150px] px-4">收藏时间</th><th className="w-[100px] px-4">操作</th></tr></thead><tbody>{favorites.map((favorite, index) => <tr key={`${favorite.type}:${favorite.code}`} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#FFF8ED] text-[#D97706]"><Star className="h-4 w-4" /></span>{favorite.title}</div></td><td className="px-4 text-[#526174]">{favorite.type === "template" ? "模板" : "报告"}</td><td className="px-4 text-[#526174]">{favorite.sourceTenantName || "—"}</td><td className="max-w-[320px] truncate px-4 text-[#526174]">{favorite.summary || "—"}</td><td className="px-4 text-[#526174]">{formatDisplayDate(favorite.createdAt)}</td><td className="px-4"><button type="button" onClick={() => window.open(getFavoriteResourceHref(webAppUrl, favorite), "_blank", "noopener,noreferrer")} disabled={!webAppUrl} className="text-xs font-semibold text-[#2167E8] hover:underline disabled:cursor-not-allowed disabled:opacity-50">查看</button></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">还没有收藏报告</div> : reports.length ? (
               <table className="data-table min-w-[800px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[168px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><span className="relative" data-report-menu><button type="button" onClick={(event) => { event.stopPropagation(); setReportMenuCode((previous) => previous === report.code ? null : report.code); }} className={`text-xs font-semibold ${reportMenuCode === report.code ? "text-[#2167E8]" : "text-[#526174] hover:text-[#2167E8]"}`} aria-label={`更多${report.name}操作`} aria-expanded={reportMenuCode === report.code} title="更多操作">更多</button>{reportMenuCode === report.code ? <div className="absolute right-0 top-7 z-20 w-32 rounded-md border border-[#DDE5F0] bg-white p-1 shadow-[0_12px_24px_rgba(23,36,58,0.12)]"><button type="button" onClick={() => openCopyDialog(report)} disabled={Boolean(copyingReportCode || deletingReportCode)} className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:opacity-50">复制</button><button type="button" onClick={() => void deleteReport(report)} disabled={Boolean(copyingReportCode || deletingReportCode)} className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-semibold text-[#D92D20] hover:bg-[#FFF8F6] disabled:cursor-not-allowed disabled:opacity-50">删除</button></div> : null}</span></div></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">{current ? "当前目录还没有匹配的报表" : "暂无报表目录，请先初始化报表数据"}</div>}
