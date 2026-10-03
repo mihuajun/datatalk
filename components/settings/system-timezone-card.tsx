@@ -34,6 +34,7 @@ export function SystemTimeZoneCard() {
   const [preview, setPreview] = useState<SettingsResponse["preview"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,11 +89,13 @@ export function SystemTimeZoneCard() {
             <div className="flex items-center gap-2.5">
               <h2 className="text-[17px] font-bold text-[#17243A]">区域与时区</h2>
             </div>
-            <p className="mt-1 text-[13px] text-[#71819B]">设置全站时间（报表更新时间、对话时间等）的展示时区</p>
+            <p className="mt-1 text-[13px] text-[#71819B]">设置全站时间（报表更新时间、对话时间等）的展示时区{systemTimeZone ? `，当前 ${systemTimeZone}` : ""}</p>
           </div>
         </div>
+        <button type="button" onClick={() => setExpanded((current) => !current)} className="settings-secondary-button">{expanded ? "收起" : "配置"}</button>
       </div>
 
+      {expanded ? (
       <div className="settings-model-form">
         <label className="settings-model-field settings-model-field-wide">
           <span>系统时区</span>
@@ -126,6 +129,7 @@ export function SystemTimeZoneCard() {
           <span>保存后立即生效；数据库仍以 UTC 存储，仅影响页面展示</span>
         </div>
       </div>
+      ) : null}
     </section>
   );
 }

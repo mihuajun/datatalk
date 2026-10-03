@@ -289,7 +289,7 @@ export function AgentRuntimeSettings({ initialRuntimeWebUrl }: { initialRuntimeW
 
           </section>
 
-          {runtime?.installed ? (
+          {runtime ? (
             <section id="agent-model-config" className="settings-model-card">
               <div className="settings-model-heading">
                 <div className="flex items-center gap-3">
