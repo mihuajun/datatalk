@@ -195,3 +195,82 @@ export async function copyPublishedResourceReport(input: {
     throw error;
   }
 }
+
+type ReportFolderRow = RowDataPacket & {
+  id: number;
+  folder_id: number;
+  name: string;
+};
+
+/**
+ * 复制报表：将源报表的 working 目录完整复制到一个新报表（同租户、同目录）。
+ */
+export async function copyReport(input: {
+  tenantId: number;
+  sourceCode: string;
+  ownerId: number;
+  ownerName: string;
+}) {
+  const sourceCode = input.sourceCode.trim();
+  const [sourceRows] = await getDbPool().query<ReportFolderRow[]>(
+    `SELECT id, folder_id, name FROM tenant_report WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL LIMIT 1`,
+    [input.tenantId, sourceCode],
+  );
+  const source = sourceRows[0];
+  if (!source) throw new Error("SOURCE_REPORT_NOT_FOUND");
+
+  const folderId = Number(source.folder_id);
+  const reportName = copyName(String(source.name));
+
+  const created = await createReport({
+    tenantId: input.tenantId,
+    folderId,
+    name: reportName,
+    ownerId: input.ownerId,
+    ownerName: input.ownerName,
+  });
+  if (!created) throw new Error("TARGET_FOLDER_NOT_FOUND");
+
+  const sourceWorkingPath = getReportWorkingPath(input.tenantId, sourceCode);
+  const targetWorkingPath = getReportWorkingPath(input.tenantId, created.code);
+  try {
+    await fs.access(path.join(sourceWorkingPath, "report.json"));
+    await fs.rm(targetWorkingPath, { recursive: true, force: true });
+    await fs.cp(sourceWorkingPath, targetWorkingPath, {
+      recursive: true,
+      filter: (source) => {
+        const relativePath = path.relative(sourceWorkingPath, source);
+        return relativePath !== "runtime" && !relativePath.startsWith(`runtime${path.sep}`);
+      },
+    });
+    await makeWorkspaceWritable(targetWorkingPath);
+    await rewriteCopiedReportMetadata(targetWorkingPath, {
+      tenantId: input.tenantId,
+      reportCode: created.code,
+      name: reportName,
+    });
+
+    const validation = await validateReportWorkspace(input.tenantId, created.code);
+    if (!validation.valid) throw new Error("COPIED_REPORT_INVALID");
+
+    const commitHash = await commitWorkspace(
+      input.tenantId,
+      created.code,
+      `复制报表 ${sourceCode}`,
+      `copy-${randomUUID()}`,
+    );
+    await getDbPool().execute(
+      "UPDATE tenant_report SET working_commit_hash = ?, current_working_revision = current_working_revision + 1 WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL",
+      [commitHash, input.tenantId, created.code],
+    );
+
+    return { report: created };
+  } catch (error) {
+    await fs.rm(getReportWorkspacePath(input.tenantId, created.code), { recursive: true, force: true }).catch(() => undefined);
+    await getDbPool().execute(
+      "DELETE FROM tenant_report WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL",
+      [input.tenantId, created.code],
+    ).catch(() => undefined);
+    throw error;
+  }
+}

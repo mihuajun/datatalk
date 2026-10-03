@@ -645,6 +645,61 @@ export async function getReportReleaseDetailByCode(tenantId: number, reportCode:
   };
 }
 
+type ReportReleaseRow = RowDataPacket & {
+  version: number;
+  status: string;
+  display_name: string | null;
+  remark: string | null;
+  description: string | null;
+  source_commit_hash: string | null;
+  created_at: string;
+};
+
+export type ReportReleaseSummary = {
+  version: number;
+  status: string;
+  displayName: string | null;
+  remark: string | null;
+  description: string | null;
+  sourceCommitHash: string | null;
+  createdAt: string;
+};
+
+/**
+ * 列出报表的所有发布版本（按版本号倒序）。
+ */
+export async function listReportReleases(tenantId: number, reportCode: string): Promise<{
+  currentVersion: number | null;
+  releases: ReportReleaseSummary[];
+}> {
+  const [reportRows] = await getDbPool().query<Array<RowDataPacket & { current_release_version: number | null }>>(
+    `SELECT current_release_version FROM tenant_report WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL LIMIT 1`,
+    [tenantId, reportCode],
+  );
+  const currentVersion = reportRows[0]?.current_release_version ?? null;
+
+  const [rows] = await getDbPool().query<ReportReleaseRow[]>(
+    `SELECT version, status, display_name, remark, description, source_commit_hash, created_at
+       FROM report_release
+      WHERE tenant_id = ? AND report_code = ?
+      ORDER BY version DESC`,
+    [tenantId, reportCode],
+  );
+
+  return {
+    currentVersion: currentVersion == null ? null : Number(currentVersion),
+    releases: rows.map((row) => ({
+      version: Number(row.version),
+      status: row.status,
+      displayName: row.display_name,
+      remark: row.remark,
+      description: row.description,
+      sourceCommitHash: row.source_commit_hash,
+      createdAt: String(row.created_at),
+    })),
+  };
+}
+
 async function createPublicLink(connection: PoolConnection, input: {
   tenantId: number;
   reportCode: string;

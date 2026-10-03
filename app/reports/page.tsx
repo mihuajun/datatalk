@@ -5,16 +5,19 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileBarChart2,
   FilePlus2,
   FolderOpen,
   FolderPlus,
+  GitBranch,
   MoreHorizontal,
   Pencil,
   RefreshCw,
   Search,
   Star,
   Trash2,
+  X,
 } from "lucide-react";
 import type { ReportFolder, ReportItem, ReportStatus } from "@/lib/report-types";
 import { useRouter } from "next/navigation";
@@ -156,9 +159,17 @@ export default function ReportsPage() {
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingReportCode, setDeletingReportCode] = useState<string | null>(null);
+  const [copyingReportCode, setCopyingReportCode] = useState<string | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [showFavorites, setShowFavorites] = useState(false);
   const [favorites, setFavorites] = useState<Array<{ code: string; title: string; summary: string | null; createdAt: string }>>([]);
+  const [versionModalCode, setVersionModalCode] = useState<string | null>(null);
+  const [versionModalName, setVersionModalName] = useState("");
+  const [releases, setReleases] = useState<Array<{ version: number; status: string; displayName: string | null; remark: string | null; description: string | null; sourceCommitHash: string | null; createdAt: string }>>([]);
+  const [currentVersion, setCurrentVersion] = useState<number | null>(null);
+  const [loadingReleases, setLoadingReleases] = useState(false);
+  const [switchingVersion, setSwitchingVersion] = useState<number | null>(null);
+  const [deletingVersion, setDeletingVersion] = useState<number | null>(null);
 
   const loadFavorites = useCallback(async () => {
     setLoading(true);
@@ -376,6 +387,113 @@ export default function ReportsPage() {
     }
   }
 
+  async function copyReport(report: ReportItem) {
+    if (copyingReportCode) return;
+    if (!window.confirm(`确定复制报表“${report.name}”吗？`)) return;
+
+    setError("");
+    setCopyingReportCode(report.code);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(report.code)}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+      });
+      const result = await response.json() as { message?: string; report?: ReportItem };
+      if (!response.ok) throw new Error(result.message || "复制报表失败");
+      await loadReports(true);
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "复制报表失败");
+    } finally {
+      setCopyingReportCode(null);
+    }
+  }
+
+  async function openVersionModal(report: ReportItem) {
+    setVersionModalCode(report.code);
+    setVersionModalName(report.name);
+    setReleases([]);
+    setCurrentVersion(null);
+    setLoadingReleases(true);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(report.code)}/releases`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      const result = await response.json() as {
+        currentVersion?: number | null;
+        releases?: typeof releases;
+        message?: string;
+      };
+      if (!response.ok) throw new Error(result.message || "版本数据加载失败");
+      setReleases(result.releases ?? []);
+      setCurrentVersion(result.currentVersion ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "版本数据加载失败");
+    } finally {
+      setLoadingReleases(false);
+    }
+  }
+
+  function closeVersionModal() {
+    setVersionModalCode(null);
+    setVersionModalName("");
+    setReleases([]);
+    setCurrentVersion(null);
+    setSwitchingVersion(null);
+    setDeletingVersion(null);
+  }
+
+  async function switchVersion(version: number) {
+    if (!versionModalCode || switchingVersion !== null || deletingVersion !== null) return;
+    if (!window.confirm(`确定将线上运行版本切换到 v${version} 吗？`)) return;
+
+    setSwitchingVersion(version);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(versionModalCode)}/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ action: "rollback", version }),
+      });
+      const result = await response.json() as { message?: string };
+      if (!response.ok) throw new Error(result.message || "切换版本失败");
+      setCurrentVersion(version);
+      await loadReports(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "切换版本失败");
+    } finally {
+      setSwitchingVersion(null);
+    }
+  }
+
+  async function deleteVersion(version: number) {
+    if (!versionModalCode || switchingVersion !== null || deletingVersion !== null) return;
+    const release = releases.find((item) => item.version === version);
+    const failed = release?.status === "failed";
+    const confirmed = window.confirm(
+      failed
+        ? `确定删除发布失败的 v${version} 记录吗？此操作不可恢复。`
+        : `确定删除版本 v${version} 吗？\n\n该版本的发布快照将被一并删除，此操作不可恢复。\n（当前线上运行版本不能删除；已发布到资源中心的版本需先在资源中心移除）`,
+    );
+    if (!confirmed) return;
+
+    setDeletingVersion(version);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(versionModalCode)}/release`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ version }),
+      });
+      const result = await response.json() as { message?: string };
+      if (!response.ok) throw new Error(result.message || "删除版本失败");
+      setReleases((previous) => previous.filter((item) => item.version !== version));
+      await loadReports(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除版本失败");
+    } finally {
+      setDeletingVersion(null);
+    }
+  }
+
   return (
     <div className="min-w-0">
       <section className="grid min-h-[calc(100vh-118px)] gap-5 lg:grid-cols-[252px_minmax(0,1fr)]">
@@ -451,12 +569,116 @@ export default function ReportsPage() {
             {loading ? <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">正在加载报表数据...</div> : showFavorites ? favorites.length ? (
               <table className="data-table min-w-[700px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="px-4">摘要</th><th className="w-[150px] px-4">收藏时间</th><th className="w-[100px] px-4">操作</th></tr></thead><tbody>{favorites.map((favorite, index) => <tr key={favorite.code} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#FFF8ED] text-[#D97706]"><Star className="h-4 w-4" /></span>{favorite.title}</div><div className="mt-1 pl-9 text-[11px] text-[#8A98AC]">{favorite.code}</div></td><td className="max-w-[320px] truncate px-4 text-[#526174]">{favorite.summary || "—"}</td><td className="px-4 text-[#526174]">{favorite.createdAt}</td><td className="px-4"><button type="button" onClick={() => window.open(`/view/${encodeURIComponent(favorite.code)}`, "_blank", "noopener,noreferrer")} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">还没有收藏报告</div> : reports.length ? (
-              <table className="data-table min-w-[800px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[168px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><button type="button" onClick={() => void deleteReport(report)} disabled={deletingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#D92D20] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{deletingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button></div></td></tr>)}</tbody></table>
+              <table className="data-table min-w-[900px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[260px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><button type="button" onClick={() => void copyReport(report)} disabled={copyingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{copyingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}复制</button><button type="button" onClick={() => void openVersionModal(report)} className="inline-flex items-center gap-1 text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline"><GitBranch className="h-3.5 w-3.5" />版本</button><button type="button" onClick={() => void deleteReport(report)} disabled={deletingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#D92D20] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{deletingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button></div></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">{current ? "当前目录还没有匹配的报表" : "暂无报表目录，请先初始化报表数据"}</div>}
           </div>
           <div className="flex min-h-[50px] items-center justify-between border-t border-[#E7EDF5] bg-white px-4 py-2 text-xs text-[#526174]"><span>共 {showFavorites ? favorites.length : reports.length} 条记录{!showFavorites && summary.reportCount ? `，当前租户共 ${summary.reportCount} 张` : ""}</span><div className="flex items-center gap-1"><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="上一页" disabled><ChevronLeft className="h-4 w-4" /></button><span className="rounded bg-[#EDF3FF] px-2.5 py-1.5 font-semibold text-[#2167E8]">1</span><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="下一页" disabled><ChevronRight className="h-4 w-4" /></button></div></div>
         </section>
       </section>
+
+      {versionModalCode ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={closeVersionModal}>
+          <div className="panel max-h-[80vh] w-[560px] max-w-[92vw] overflow-hidden bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#E7EDF5] px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <GitBranch className="h-4 w-4 text-[#2167E8]" />
+                <h3 className="text-[15px] font-bold text-[#17243A]">版本管理</h3>
+                <span className="text-xs text-[#8A98AC]">— {versionModalName}</span>
+              </div>
+              <button type="button" onClick={closeVersionModal} className="rounded p-1 text-[#8A98AC] hover:bg-[#F5F8FD] hover:text-[#344054]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto">
+              {loadingReleases ? (
+                <div className="px-6 py-16 text-center text-sm text-[#8A98AC]">
+                  <RefreshCw className="mx-auto mb-2 h-5 w-5 animate-spin text-[#2167E8]" />
+                  正在加载版本列表...
+                </div>
+              ) : releases.length === 0 ? (
+                <div className="px-6 py-16 text-center text-sm text-[#8A98AC]">
+                  暂无发布版本，请先在编辑器中发布报表。
+                </div>
+              ) : (
+                <ul className="divide-y divide-[#EEF2F7]">
+                  {releases.map((release) => {
+                    const isCurrent = release.version === currentVersion;
+                    const isSwitching = switchingVersion === release.version;
+                    const isDeleting = deletingVersion === release.version;
+                    const actionBusy = switchingVersion !== null || deletingVersion !== null;
+                    return (
+                      <li key={release.version} className={`flex items-start gap-3 px-5 py-3.5 ${isCurrent ? "bg-[#EDF3FF]" : "hover:bg-[#F8FAFD]"}`}>
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EDF3FF] text-[13px] font-bold text-[#2167E8]">
+                          v{release.version}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-[#344054]">{release.displayName || `版本 v${release.version}`}</span>
+                            {isCurrent && <span className="rounded-full bg-[#EAF8F2] px-2 py-0.5 text-[11px] font-semibold text-[#16845B]">当前线上</span>}
+                            {release.status === "failed" && <span className="rounded-full bg-[#FFF1F0] px-2 py-0.5 text-[11px] font-semibold text-[#D92D20]">发布失败</span>}
+                          </div>
+                          {release.description ? <div className="mt-1 text-xs text-[#526174] line-clamp-2">{release.description}</div> : null}
+                          <div className="mt-1 text-[11px] text-[#8A98AC]">
+                            发布于 {new Date(release.createdAt).toLocaleString("zh-CN")}
+                            {release.sourceCommitHash ? ` · ${release.sourceCommitHash.slice(0, 8)}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {isCurrent ? (
+                            <span className="inline-flex items-center rounded-md bg-[#EAF8F2] px-2.5 py-1 text-[12px] font-semibold text-[#16845B]">运行中</span>
+                          ) : release.status === "failed" ? (
+                            <>
+                              <span className="text-[12px] text-[#98A2B3]">不可用</span>
+                              <button
+                                type="button"
+                                onClick={() => void deleteVersion(release.version)}
+                                disabled={actionBusy}
+                                title="删除失败记录"
+                                className="inline-flex items-center gap-1 rounded-md border border-[#F3C2BF] px-2.5 py-1 text-[12px] font-semibold text-[#D92D20] hover:bg-[#FFF5F4] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isDeleting ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                {isDeleting ? "删除中" : "删除"}
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void switchVersion(release.version)}
+                                disabled={actionBusy}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#DDE5F0] px-2.5 py-1 text-[12px] font-semibold text-[#2167E8] hover:bg-[#EDF3FF] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isSwitching ? <RefreshCw className="h-3 w-3 animate-spin" /> : null}
+                                {isSwitching ? "切换中" : "切换到此版本"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteVersion(release.version)}
+                                disabled={actionBusy}
+                                title="删除该版本"
+                                className="inline-flex items-center gap-1 rounded-md border border-[#F3C2BF] px-2.5 py-1 text-[12px] font-semibold text-[#D92D20] hover:bg-[#FFF5F4] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isDeleting ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                {isDeleting ? "删除中" : "删除"}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-[#E7EDF5] bg-[#F8FAFD] px-5 py-3 text-[11px] text-[#8A98AC]">
+              <span>共 {releases.length} 个版本</span>
+              <button type="button" onClick={closeVersionModal} className="rounded-md border border-[#DDE5F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD]">关闭</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

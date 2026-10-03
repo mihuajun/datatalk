@@ -403,3 +403,58 @@ export async function rollbackRelease(tenantId: number, reportCode: string, vers
   await getDbPool().execute("UPDATE tenant_report SET current_release_version=?, release_status='已发布', status='已发布' WHERE tenant_id=? AND code=? AND deleted_at IS NULL", [version, tenantId, reportCode]);
   return { version };
 }
+
+/**
+ * 删除指定发布版本：删除 report_release 记录与 releases/v<n> 目录快照。
+ * 约束：当前线上运行版本不可删；已同步到资源中心的版本不可删（避免悬空引用）。
+ */
+export async function deleteReportRelease(tenantId: number, reportCode: string, version: number) {
+  assertReportCode(reportCode);
+  if (!Number.isInteger(version) || version <= 0) throw auditError("RELEASE_NOT_FOUND");
+  const pool = getDbPool();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [reportRows] = await connection.query<Array<RowDataPacket & { current_release_version: number | null }>>(
+      "SELECT current_release_version FROM tenant_report WHERE tenant_id=? AND code=? AND deleted_at IS NULL LIMIT 1 FOR UPDATE",
+      [tenantId, reportCode],
+    );
+    if (!reportRows[0]) throw auditError("REPORT_NOT_FOUND");
+    if (Number(reportRows[0].current_release_version) === version) {
+      throw auditError("RELEASE_CURRENT_CANNOT_DELETE");
+    }
+
+    const [releaseRows] = await connection.query<Array<RowDataPacket & { version: number }>>(
+      "SELECT version FROM report_release WHERE tenant_id=? AND report_code=? AND version=? LIMIT 1 FOR UPDATE",
+      [tenantId, reportCode, version],
+    );
+    if (!releaseRows[0]) throw auditError("RELEASE_NOT_FOUND");
+
+    const [resourceRows] = await connection.query<Array<RowDataPacket & { id: number }>>(
+      `SELECT id FROM resource_item
+        WHERE tenant_id=? AND asset_type IN ('report', 'template')
+          AND source_code=? AND source_version=? AND status='published'
+        LIMIT 1`,
+      [tenantId, reportCode, version],
+    );
+    if (resourceRows[0]) throw auditError("RELEASE_REFERENCED_BY_RESOURCE");
+
+    await connection.execute(
+      "DELETE FROM report_release WHERE tenant_id=? AND report_code=? AND version=?",
+      [tenantId, reportCode, version],
+    );
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  // 数据库为版本清单的唯一事实源；快照目录删除失败只记录日志，不影响删除结果（残留目录不会再被引用）。
+  const releasePath = path.join(getReportWorkspacePath(tenantId, reportCode), "releases", `v${version}`);
+  await fs.rm(releasePath, { recursive: true, force: true }).catch((error) => {
+    console.error("Delete release snapshot failed", { tenantId, reportCode, version, error });
+  });
+  return { version };
+}
