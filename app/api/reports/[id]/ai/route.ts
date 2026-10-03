@@ -32,6 +32,7 @@ function runtimeTitleFromEvent(event: { type?: string; data?: unknown }) {
 function toUserFacingAiError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   if (message === "AGENT_RUNTIME_TIMEOUT") return "AI 处理超时，请稍后重试；如果持续超时，请检查 Agent Runtime。";
+  if (message === "AGENT_RUNTIME_ABORTED") return "AI 处理已中断（可能是单轮耗时超过限制），请稍后重试。";
   if (message === "AGENT_RUNTIME_UNAUTHORIZED") return "Agent Runtime 鉴权已失效，请重启 Agent Runtime 后重试。";
   if (message === "DSH_EVENT_STREAM_FAILED" || message === "DSH_STREAM_FAILED") return "AI 实时连接中断，请稍后重试。";
   if (message.startsWith("REPORT_AGENT_TOOL_TRANSPORT_FAILED")) return "报表预览工具无法连接 Studio，请确认 Studio 端口和 Runtime 已同步后重试。";
@@ -247,6 +248,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const runtimeStatus = await getAgentRuntimeStatus();
   if (!runtimeStatus.running) return new Response(JSON.stringify({ message: "Agent Runtime 未运行，请先启动 Runtime" }), { status: 503, headers: { "Content-Type": "application/json" } });
 
+  const turnTimeoutMs = Number(process.env.REPORT_AI_TURN_TIMEOUT_MS ?? 600000);
+  const turnTimeoutController = new AbortController();
+  const turnTimeoutHandle = Number.isFinite(turnTimeoutMs) && turnTimeoutMs > 0
+    ? setTimeout(() => turnTimeoutController.abort(), turnTimeoutMs)
+    : null;
+
   const previousConversation = conversationId ? await getReportAiConversation(session.tenantId, reportCode, conversationId) : null;
   const workingDirectory = getReportWorkingPath(session.tenantId, reportCode);
   let stagedAttachments;
@@ -400,6 +407,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           onSessionReady: onRuntimeSessionReady,
           onEvent: onRuntimeEvent,
           onQuestionEvent: onRuntimeQuestionEvent,
+          signal: turnTimeoutController.signal,
         });
 
         // Keep the first turn fast, but do not let a visual edit end after a
@@ -436,6 +444,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             onSessionReady: onRuntimeSessionReady,
             onEvent: onRuntimeEvent,
             onQuestionEvent: onRuntimeQuestionEvent,
+            signal: turnTimeoutController.signal,
           });
         }
 
@@ -540,6 +549,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         send("error", { message: details ? `${publicError}：${details}` : publicError });
         send("done", { applied: false });
       } finally {
+        if (turnTimeoutHandle) clearTimeout(turnTimeoutHandle);
         disposePreviewClientRef.current?.();
         await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
         if (!clientDisconnected && controller.desiredSize !== null) controller.close();
