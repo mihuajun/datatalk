@@ -2,6 +2,7 @@ import { BarChart3, LineChart, Table2 } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { ReportWebFrame } from "@/components/report-web-frame";
+import { GeneratingStatusOverlay } from "@/components/generating-status-overlay";
 import { PublicLinkAccessForm } from "@/app/link/[code]/public-link-access-form";
 import { resolveReportFilterValues, toReportSearchParams, type ReportPageSearchParams } from "@/lib/report-filters";
 import type { ReportDefinition, ReportWidget, ReportWidgetType } from "@/lib/report-types";
@@ -163,15 +164,16 @@ export default async function PublicReportPage({ params, searchParams }: { param
   if (result.webFiles["page.html"]) {
     return (
       <main className="min-h-screen bg-[#F4F7FB]">
-          <ReportWebFrame
+        <ReportWebFrame
           className="block min-h-screen w-full border-0 bg-[#F4F7FB]"
-            title={result.report.name}
-            reportCode={publicLinkCode}
-            source="release"
-            runtimeTarget="public-link"
-            srcDoc={composeWebReportSrcDoc(result.webFiles, { filters: filterResolution.values, urlFilters: filterResolution.urlValues, defaults: filterResolution.defaults })}
-            refreshKey={`${publicLinkCode}-${JSON.stringify(filterResolution.values)}`}
+          title={result.report.name}
+          reportCode={publicLinkCode}
+          source="release"
+          runtimeTarget="public-link"
+          srcDoc={composeWebReportSrcDoc(result.webFiles, { filters: filterResolution.values, urlFilters: filterResolution.urlValues, defaults: filterResolution.defaults })}
+          refreshKey={`${publicLinkCode}-${JSON.stringify(filterResolution.values)}`}
         />
+        <GeneratingStatusOverlay reportCode={result.report.code} />
       </main>
     );
   }
