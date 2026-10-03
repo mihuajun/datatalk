@@ -154,9 +154,14 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
   const [deletingReportCode, setDeletingReportCode] = useState<string | null>(null);
+  const [copyingReportCode, setCopyingReportCode] = useState<string | null>(null);
+  const [copyTarget, setCopyTarget] = useState<ReportItem | null>(null);
+  const [copyName, setCopyName] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [reportMenuCode, setReportMenuCode] = useState<string | null>(null);
   const [showFavorites, setShowFavorites] = useState(false);
   const [favorites, setFavorites] = useState<Array<{ code: string; title: string; summary: string | null; createdAt: string }>>([]);
 
@@ -212,16 +217,20 @@ export default function ReportsPage() {
   }, [loadReports]);
 
   useEffect(() => {
-    if (!menuOpenId) return;
+    if (!menuOpenId && !reportMenuCode) return;
 
     function closeMenu(event: MouseEvent) {
       const target = event.target;
-      if (target instanceof Element && target.closest("[data-folder-menu]")) return;
+      if (target instanceof Element && (target.closest("[data-folder-menu]") || target.closest("[data-report-menu]"))) return;
       setMenuOpenId(null);
+      setReportMenuCode(null);
     }
 
     function closeMenuOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpenId(null);
+      if (event.key === "Escape") {
+        setMenuOpenId(null);
+        setReportMenuCode(null);
+      }
     }
 
     document.addEventListener("click", closeMenu);
@@ -230,7 +239,7 @@ export default function ReportsPage() {
       document.removeEventListener("click", closeMenu);
       document.removeEventListener("keydown", closeMenuOnEscape);
     };
-  }, [menuOpenId]);
+  }, [menuOpenId, reportMenuCode]);
 
   const current = useMemo(() => findFolder(folders, selected) ?? folders[0] ?? null, [folders, selected]);
   const reports = useMemo(() => {
@@ -357,6 +366,7 @@ export default function ReportsPage() {
 
   async function deleteReport(report: ReportItem) {
     if (deletingReportCode) return;
+    setReportMenuCode(null);
     if (!window.confirm(`确定删除报表“${report.name}”吗？删除后将不再显示在报表中心。`)) return;
 
     setError("");
@@ -373,6 +383,51 @@ export default function ReportsPage() {
       setError(deleteError instanceof Error ? deleteError.message : "删除报表失败");
     } finally {
       setDeletingReportCode(null);
+    }
+  }
+
+  function openCopyDialog(report: ReportItem) {
+    setReportMenuCode(null);
+    setError("");
+    setNotice("");
+    setCopyTarget(report);
+    setCopyName(`${report.name}（副本）`.slice(0, 160));
+  }
+
+  function closeCopyDialog() {
+    if (copyingReportCode) return;
+    setCopyTarget(null);
+    setCopyName("");
+  }
+
+  async function copyReport() {
+    if (!copyTarget || copyingReportCode || deletingReportCode) return;
+
+    const name = copyName.trim();
+    if (!name) {
+      setError("请输入新报表名称");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    setCopyingReportCode(copyTarget.code);
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(copyTarget.code)}/copy`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const result = await response.json() as { message?: string; report?: ReportItem };
+      if (!response.ok || !result.report) throw new Error(result.message || "复制报表失败");
+      setNotice(`已复制报表“${result.report.name}”`);
+      setCopyTarget(null);
+      setCopyName("");
+      await loadReports(true);
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "复制报表失败");
+    } finally {
+      setCopyingReportCode(null);
     }
   }
 
@@ -445,18 +500,50 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {error ? <div className="flex items-center justify-between gap-3 border-b border-[#F5D4CC] bg-[#FFF8F6] px-4 py-3 text-xs text-[#B42318]"><span>{error}</span><button type="button" onClick={() => void loadReports()} className="font-semibold underline">重试</button></div> : null}
+          {error ? <div className="flex items-center justify-between gap-3 border-b border-[#F5D4CC] bg-[#FFF8F6] px-4 py-3 text-xs text-[#B42318]"><span>{error}</span><button type="button" onClick={() => void loadReports()} className="font-semibold underline">重试</button></div> : notice ? <div className="border-b border-[#B7E4CB] bg-[#F2FBF5] px-4 py-3 text-xs text-[#16845B]">{notice}</div> : null}
 
           <div className="overflow-x-auto bg-white">
             {loading ? <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">正在加载报表数据...</div> : showFavorites ? favorites.length ? (
               <table className="data-table min-w-[700px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="px-4">摘要</th><th className="w-[150px] px-4">收藏时间</th><th className="w-[100px] px-4">操作</th></tr></thead><tbody>{favorites.map((favorite, index) => <tr key={favorite.code} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#FFF8ED] text-[#D97706]"><Star className="h-4 w-4" /></span>{favorite.title}</div><div className="mt-1 pl-9 text-[11px] text-[#8A98AC]">{favorite.code}</div></td><td className="max-w-[320px] truncate px-4 text-[#526174]">{favorite.summary || "—"}</td><td className="px-4 text-[#526174]">{favorite.createdAt}</td><td className="px-4"><button type="button" onClick={() => window.open(`/view/${encodeURIComponent(favorite.code)}`, "_blank", "noopener,noreferrer")} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">还没有收藏报告</div> : reports.length ? (
-              <table className="data-table min-w-[800px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[168px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><button type="button" onClick={() => void deleteReport(report)} disabled={deletingReportCode === report.code} className="inline-flex items-center gap-1 text-xs font-semibold text-[#D92D20] hover:underline disabled:cursor-not-allowed disabled:opacity-60">{deletingReportCode === report.code ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button></div></td></tr>)}</tbody></table>
+              <table className="data-table min-w-[800px] w-full border-collapse text-left"><thead className="h-[46px] bg-[#F5F8FF] text-[11px] font-semibold text-[#526174]"><tr><th className="w-[72px] px-4">序号</th><th className="px-4">报表名称</th><th className="w-[142px] px-4">最近更新时间</th><th className="w-[96px] px-4">负责人</th><th className="w-[88px] px-4">状态</th><th className="w-[168px] px-4">操作</th></tr></thead><tbody>{reports.map((report, index) => <tr key={report.id} className="h-[60px] text-[13px]"><td className="px-4 font-semibold text-[#667085]">{index + 1}</td><td className="px-4"><div className="flex items-center gap-2.5 font-semibold text-[#344054]"><span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><FileBarChart2 className="h-4 w-4" /></span>{report.name}</div></td><td className="px-4 text-[#526174]">{report.updatedAt}</td><td className="px-4 text-[#526174]">{report.owner}</td><td className="px-4"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass(report.status)}`}>{report.status}</span></td><td className="px-4"><div className="flex items-center gap-3 whitespace-nowrap"><button type="button" onClick={() => viewReport(report)} className="text-xs font-semibold text-[#2167E8] hover:underline">查看</button><button type="button" onClick={() => editReport(report)} className="text-xs font-semibold text-[#526174] hover:text-[#2167E8] hover:underline">编辑</button><span className="relative" data-report-menu><button type="button" onClick={(event) => { event.stopPropagation(); setReportMenuCode((previous) => previous === report.code ? null : report.code); }} className={`text-xs font-semibold ${reportMenuCode === report.code ? "text-[#2167E8]" : "text-[#526174] hover:text-[#2167E8]"}`} aria-label={`更多${report.name}操作`} aria-expanded={reportMenuCode === report.code} title="更多操作">更多</button>{reportMenuCode === report.code ? <div className="absolute right-0 top-7 z-20 w-32 rounded-md border border-[#DDE5F0] bg-white p-1 shadow-[0_12px_24px_rgba(23,36,58,0.12)]"><button type="button" onClick={() => openCopyDialog(report)} disabled={Boolean(copyingReportCode || deletingReportCode)} className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:opacity-50">复制</button><button type="button" onClick={() => void deleteReport(report)} disabled={Boolean(copyingReportCode || deletingReportCode)} className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-semibold text-[#D92D20] hover:bg-[#FFF8F6] disabled:cursor-not-allowed disabled:opacity-50">删除</button></div> : null}</span></div></td></tr>)}</tbody></table>
             ) : <div className="px-6 py-20 text-center text-sm text-[#8A98AC]">{current ? "当前目录还没有匹配的报表" : "暂无报表目录，请先初始化报表数据"}</div>}
           </div>
           <div className="flex min-h-[50px] items-center justify-between border-t border-[#E7EDF5] bg-white px-4 py-2 text-xs text-[#526174]"><span>共 {showFavorites ? favorites.length : reports.length} 条记录{!showFavorites && summary.reportCount ? `，当前租户共 ${summary.reportCount} 张` : ""}</span><div className="flex items-center gap-1"><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="上一页" disabled><ChevronLeft className="h-4 w-4" /></button><span className="rounded bg-[#EDF3FF] px-2.5 py-1.5 font-semibold text-[#2167E8]">1</span><button type="button" className="rounded p-1.5 text-[#B8C5D8]" aria-label="下一页" disabled><ChevronRight className="h-4 w-4" /></button></div></div>
         </section>
       </section>
+      {copyTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#17243A]/35 px-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeCopyDialog(); }}>
+          <form
+            className="w-full max-w-[440px] rounded-lg border border-[#DDE5F0] bg-white p-5 shadow-[0_20px_50px_rgba(23,36,58,0.18)]"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void copyReport();
+            }}
+          >
+            <h3 className="text-base font-bold text-[#17243A]">复制报表</h3>
+            <p className="mt-1.5 text-xs leading-5 text-[#71819B]">将在当前目录中创建报表副本，原报表内容不会被修改。</p>
+            <div className="mt-4 rounded-md bg-[#F8FAFD] px-3 py-2.5 text-xs text-[#526174]">
+              <span className="text-[#8A98AC]">当前目录：</span>{current?.name || "当前目录"}
+            </div>
+            <label className="mt-4 block text-xs font-semibold text-[#526174]" htmlFor="copy-report-name">新报表名称</label>
+            <input
+              id="copy-report-name"
+              value={copyName}
+              onChange={(event) => setCopyName(event.target.value)}
+              maxLength={160}
+              autoFocus
+              disabled={Boolean(copyingReportCode)}
+              className="mt-2 h-10 w-full rounded-md border border-[#DDE5F0] px-3 text-sm text-[#344054] outline-none placeholder:text-[#98A2B3] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10 disabled:bg-[#F8FAFD]"
+              placeholder="请输入新报表名称"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={closeCopyDialog} disabled={Boolean(copyingReportCode)} className="h-9 rounded-md border border-[#DDE5F0] px-4 text-xs font-semibold text-[#526174] hover:bg-[#F8FAFD] disabled:cursor-not-allowed disabled:opacity-50">取消</button>
+              <button type="submit" disabled={Boolean(copyingReportCode) || !copyName.trim()} className="h-9 rounded-md bg-[#2167E8] px-4 text-xs font-semibold text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50">{copyingReportCode ? "复制中..." : "确认复制"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

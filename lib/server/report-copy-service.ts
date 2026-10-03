@@ -21,11 +21,92 @@ type SourceReportRow = RowDataPacket & {
   source_commit_hash: string | null;
 };
 
+type WorkingReportRow = RowDataPacket & {
+  folder_id: number;
+  name: string;
+};
+
 type CopyableResourceAssetType = Extract<ResourceAssetType, "report" | "template">;
 
 function copyName(title: string) {
   const suffix = "（副本）";
   return `${title.slice(0, Math.max(1, 160 - suffix.length))}${suffix}`;
+}
+
+export async function copyWorkingReport(input: {
+  tenantId: number;
+  sourceCode: string;
+  ownerId: number;
+  ownerName: string;
+  name?: string;
+}) {
+  const sourceCode = input.sourceCode.trim();
+  const [sourceRows] = await getDbPool().query<WorkingReportRow[]>(
+    "SELECT folder_id, name FROM tenant_report WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL LIMIT 1",
+    [input.tenantId, sourceCode],
+  );
+  const source = sourceRows[0];
+  if (!source) throw new Error("SOURCE_REPORT_NOT_FOUND");
+
+  const sourceWorkingPath = getReportWorkingPath(input.tenantId, sourceCode);
+  try {
+    await fs.access(path.join(sourceWorkingPath, "report.json"));
+  } catch {
+    throw new Error("SOURCE_REPORT_NOT_FOUND");
+  }
+
+  const requestedName = input.name?.trim() || "";
+  const reportName = requestedName || copyName(String(source.name));
+  if (reportName.length > 160) throw new Error("REPORT_NAME_TOO_LONG");
+  const created = await createReport({
+    tenantId: input.tenantId,
+    folderId: Number(source.folder_id),
+    name: reportName,
+    ownerId: input.ownerId,
+    ownerName: input.ownerName,
+  });
+  if (!created) throw new Error("TARGET_FOLDER_NOT_FOUND");
+
+  const targetWorkingPath = getReportWorkingPath(input.tenantId, created.code);
+  try {
+    await fs.rm(targetWorkingPath, { recursive: true, force: true });
+    await fs.cp(sourceWorkingPath, targetWorkingPath, {
+      recursive: true,
+      filter: (sourcePath) => {
+        const relativePath = path.relative(sourceWorkingPath, sourcePath);
+        return relativePath !== "runtime" && !relativePath.startsWith(`runtime${path.sep}`);
+      },
+    });
+    await makeWorkspaceWritable(targetWorkingPath);
+    await rewriteCopiedReportMetadata(targetWorkingPath, {
+      tenantId: input.tenantId,
+      reportCode: created.code,
+      name: reportName,
+    });
+
+    const validation = await validateReportWorkspace(input.tenantId, created.code);
+    if (!validation.valid) throw new Error("COPIED_REPORT_INVALID");
+
+    const commitHash = await commitWorkspace(
+      input.tenantId,
+      created.code,
+      `复制报表 ${sourceCode}`,
+      `copy-${randomUUID()}`,
+    );
+    await getDbPool().execute(
+      "UPDATE tenant_report SET working_commit_hash = ?, current_working_revision = current_working_revision + 1 WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL",
+      [commitHash, input.tenantId, created.code],
+    );
+
+    return { report: created satisfies ReportItem };
+  } catch (error) {
+    await fs.rm(getReportWorkspacePath(input.tenantId, created.code), { recursive: true, force: true }).catch(() => undefined);
+    await getDbPool().execute(
+      "DELETE FROM tenant_report WHERE tenant_id = ? AND code = ? AND deleted_at IS NULL",
+      [input.tenantId, created.code],
+    ).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function rewriteCopiedReportMetadata(workingPath: string, target: { tenantId: number; reportCode: string; name: string }) {

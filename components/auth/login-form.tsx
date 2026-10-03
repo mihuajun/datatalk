@@ -18,24 +18,52 @@ export function LoginForm({ returnTo, registrationEnabled = true, githubEnabled,
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberPassword, setRememberPassword] = useState(false);
   const [lastLoginMethod, setLastLoginMethod] = useState<string | null>(null);
 
   useEffect(() => {
     const match = document.cookie.match(/(?:^|;\s*)datatalk-last-login-method=([^;]+)/);
     setLastLoginMethod(match?.[1] || null);
+
+    const shouldRestorePassword = window.localStorage.getItem("datatalk-remember-password") === "1";
+    setRememberPassword(shouldRestorePassword);
+    if (!shouldRestorePassword || !navigator.credentials?.get) return;
+
+    void navigator.credentials.get({ password: true, mediation: "optional" } as CredentialRequestOptions).then((credential) => {
+      if (!credential || credential.type !== "password") return;
+      const saved = credential as Credential & { id?: string; password?: string };
+      if (saved.id) setUsername(saved.id);
+      if (saved.password) setPassword(saved.password);
+    }).catch(() => {
+      // The browser may deny silent credential access; native autofill remains available.
+    });
   }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const username = String(data.get("username") || "").trim();
-    const password = String(data.get("password") || "");
-    if (!username || !password) return setError("请输入账号和密码。");
+    const loginUsername = String(data.get("username") || "").trim();
+    const loginPassword = String(data.get("password") || "");
+    if (!loginUsername || !loginPassword) return setError("请输入账号和密码。");
     setPending(true); setError(null);
     try {
-      const response = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, returnTo }) });
+      const response = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: loginUsername, password: loginPassword, returnTo }) });
       const result = await response.json() as { success?: boolean; message?: string; redirectTo?: string };
       if (!response.ok || !result.success) return setError(result.message || "登录失败，请稍后重试。");
+      if (rememberPassword && typeof window !== "undefined" && "PasswordCredential" in window && navigator.credentials?.store) {
+        try {
+          const PasswordCredentialConstructor = (window as Window & { PasswordCredential?: new (options: { id: string; password: string; name?: string }) => Credential }).PasswordCredential;
+          if (PasswordCredentialConstructor) {
+            await navigator.credentials.store(new PasswordCredentialConstructor({ id: loginUsername, password: loginPassword, name: loginUsername }));
+          }
+        } catch {
+          // Browser password managers may reject programmatic storage; login should still succeed.
+        }
+      }
+      if (rememberPassword) window.localStorage.setItem("datatalk-remember-password", "1");
+      else window.localStorage.removeItem("datatalk-remember-password");
       document.cookie = "datatalk-last-login-method=password; Path=/; Max-Age=31536000; SameSite=Lax";
       const target = result.redirectTo || "/reports";
       if (target.startsWith("/")) { router.push(target); router.refresh(); } else window.location.assign(target);
@@ -58,13 +86,19 @@ export function LoginForm({ returnTo, registrationEnabled = true, githubEnabled,
       <div>
         {lastLoginMethod === "password" ? <div className="mb-2 flex justify-end"><span className="rounded-full bg-[#EAF8F2] px-1.5 py-0.5 text-[9px] font-semibold text-[#16845B]">上次登录</span></div> : null}
         <label className="sr-only" htmlFor="login-username">账号</label>
-        <input id="login-username" name="username" autoComplete="username" className="h-12 w-full rounded-md border border-[#DDE5F0] bg-white px-3 text-sm text-[#2B3A52] outline-none placeholder:text-[#9AA8BA] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10" placeholder="请输入手机号或邮箱" />
+        <input id="login-username" name="username" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" className="h-12 w-full rounded-md border border-[#DDE5F0] bg-white px-3 text-sm text-[#2B3A52] outline-none placeholder:text-[#9AA8BA] focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10" placeholder="请输入手机号或邮箱" />
       </div>
       <div>
         <label className="sr-only" htmlFor="login-password">密码</label>
-        <div className="flex h-12 items-center rounded-md border border-[#DDE5F0] px-3 focus-within:border-[#2167E8] focus-within:ring-4 focus-within:ring-[#2167E8]/10"><input id="login-password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" className="h-full min-w-0 flex-1 border-0 bg-transparent text-sm text-[#2B3A52] outline-none placeholder:text-[#9AA8BA]" placeholder="请输入密码" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "隐藏密码" : "显示密码"} className="text-[#8A98AC] hover:text-[#2167E8]">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
+        <div className="flex h-12 items-center rounded-md border border-[#DDE5F0] px-3 focus-within:border-[#2167E8] focus-within:ring-4 focus-within:ring-[#2167E8]/10"><input id="login-password" name="password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" className="h-full min-w-0 flex-1 border-0 bg-transparent text-sm text-[#2B3A52] outline-none placeholder:text-[#9AA8BA]" placeholder="请输入密码" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "隐藏密码" : "显示密码"} className="text-[#8A98AC] hover:text-[#2167E8]">{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
       </div>
-      {registrationEnabled ? <div className="flex justify-end"><Link href={`/reset-password${returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""}`} className="text-xs text-[#2167E8] hover:underline">忘记密码</Link></div> : null}
+      <div className="flex items-center justify-between gap-3">
+        <label className="inline-flex items-center gap-2 text-xs text-[#71819B]">
+          <input type="checkbox" checked={rememberPassword} onChange={(event) => { const checked = event.target.checked; setRememberPassword(checked); if (checked) window.localStorage.setItem("datatalk-remember-password", "1"); else window.localStorage.removeItem("datatalk-remember-password"); }} className="h-3.5 w-3.5 rounded border-[#C9D4E3] text-[#2167E8] focus:ring-[#2167E8]" />
+          记住密码
+        </label>
+        {registrationEnabled ? <Link href={`/reset-password${returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""}`} className="text-xs text-[#2167E8] hover:underline">忘记密码</Link> : null}
+      </div>
       {error ? <div role="alert" className="rounded-md border border-[#FFD4DC] bg-[#FFF6F7] px-3 py-2.5 text-xs text-[#C73A55]">{error}</div> : null}
       <SubmitButton pending={pending} />
     </form>
