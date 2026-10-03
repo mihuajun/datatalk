@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { encodeAuthSession } from "@/lib/server/auth-session";
+import { authCookieOptions, encodeAuthSession } from "@/lib/server/auth-session";
 import { findOrCreatePhoneUser } from "@/lib/server/phone-auth-repository";
 import { consumePhoneCode, isSmsConfigured } from "@/lib/server/sms-auth";
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
@@ -30,14 +30,7 @@ export async function POST(request: Request) {
       created: user.created,
       redirectTo: safeReturnTo(body.returnTo),
     });
-    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-      ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}),
-    });
+    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), authCookieOptions());
     return response;
   } catch (error) {
     if (error instanceof Error && error.message === "PHONE_USER_DISABLED") {

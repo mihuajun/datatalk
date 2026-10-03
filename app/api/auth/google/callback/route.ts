@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { encodeAuthSession } from "@/lib/server/auth-session";
+import { authCookieOptions, encodeAuthSession } from "@/lib/server/auth-session";
 import { findOrCreateGoogleUser, getGoogleRedirectUri } from "@/lib/server/google-auth";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
 import { isRegistrationEnabled } from "@/lib/server/auth-config";
@@ -21,9 +21,8 @@ export async function GET(request: Request) {
     const user = await findOrCreateGoogleUser(request, code);
     const next = safeReturnTo(savedNext ? decodeURIComponent(savedNext) : url.searchParams.get("next"));
     const response = NextResponse.redirect(new URL(next, publicOrigin));
-    const options = { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 };
-    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), { ...options, ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}) });
-    response.cookies.set("datatalk-last-login-method", "google", { ...options, httpOnly: false, maxAge: 365 * 24 * 60 * 60 });
+    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), authCookieOptions());
+    response.cookies.set("datatalk-last-login-method", "google", { ...authCookieOptions(), httpOnly: false, maxAge: 365 * 24 * 60 * 60 });
     response.cookies.delete("datatalk-google-state");
     response.cookies.delete("datatalk-google-next");
     return response;
