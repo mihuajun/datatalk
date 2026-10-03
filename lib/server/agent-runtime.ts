@@ -29,7 +29,7 @@ const INSTALLED_PACKAGE_PATH = path.join(INSTALL_DIR, "node_modules", "@deepseek
 const DSH_ENTRY_PATH = path.join(INSTALL_DIR, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
 const DEFAULT_PORT = 3080;
 const INSTALL_HEAP_OPTION = "--max-old-space-size=8192";
-const DEFAULT_AGENT_RUNTIME_VERSION = "0.1.2-rc.1";
+const DEFAULT_AGENT_RUNTIME_VERSION = "0.2.0-rc.2";
 const MANAGED_PNPM_VERSION = "12.3.4";
 const MIN_RUNTIME_NODE_MAJOR = 22;
 const MIN_RUNTIME_NODE_MINOR = 5;
