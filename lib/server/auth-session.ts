@@ -65,12 +65,19 @@ function signSession(value: string) {
   return createHmac("sha256", getSessionSecret()).update(value).digest("base64url");
 }
 
-function authCookieOptions() {
+export function authCookieOptions() {
   const domain = process.env.AUTH_COOKIE_DOMAIN?.trim();
+  // AUTH_COOKIE_SECURE: false/0/off 关闭 Secure；true/1 强制开启；auto 或未设置时生产环境开启
+  const secureEnv = process.env.AUTH_COOKIE_SECURE?.trim().toLowerCase();
+  const secure = secureEnv === "false" || secureEnv === "0" || secureEnv === "off"
+    ? false
+    : secureEnv === "true" || secureEnv === "1"
+      ? true
+      : process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure,
     path: "/",
     maxAge: 60 * 60 * 24,
     ...(domain ? { domain } : {}),

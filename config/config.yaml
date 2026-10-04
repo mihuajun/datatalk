@@ -10,6 +10,8 @@ site:
 
 # AUTH_SESSION_SECRET must be identical in datatalk-studio and datatalk-web.
 # Set AUTH_COOKIE_DOMAIN to the shared parent domain when the apps use different subdomains.
+# AUTH_COOKIE_SECURE controls the cookie Secure flag: true/1 forces it on,
+# false/0/off forces it off (e.g. HTTP behind a terminating proxy), unset auto-enables in production.
 
 database:
   url: "${DATABASE_URL}"

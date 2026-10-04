@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { encodeAuthSession } from "@/lib/server/auth-session";
+import { authCookieOptions, encodeAuthSession } from "@/lib/server/auth-session";
 import { registerAccount } from "@/lib/server/account-registration";
 import { consumeEmailCode } from "@/lib/server/email-auth";
 import { consumePhoneCode } from "@/lib/server/sms-auth";
@@ -34,14 +34,7 @@ export async function POST(request: Request) {
   try {
     const user = await registerAccount({ username, password, ...(method === "phone" ? { phone: contact } : { email: contact }) });
     const response = NextResponse.json({ success: true, redirectTo: safeReturnTo(body.returnTo) });
-    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-      ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}),
-    });
+    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), authCookieOptions());
     return response;
   } catch (error) {
     if (error instanceof Error) {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
-import { encodeAuthSession } from "@/lib/server/auth-session";
+import { authCookieOptions, encodeAuthSession } from "@/lib/server/auth-session";
 import { findOrCreateGitHubUser, getGitHubRedirectUri } from "@/lib/server/github-auth";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
 import { isRegistrationEnabled } from "@/lib/server/auth-config";
@@ -19,8 +19,8 @@ export async function GET(request: Request) {
   try {
     const user = await findOrCreateGitHubUser(request, code);
     const response = NextResponse.redirect(new URL(safeReturnTo(savedNext ? decodeURIComponent(savedNext) : url.searchParams.get("next")), publicOrigin));
-    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24, ...(process.env.AUTH_COOKIE_DOMAIN?.trim() ? { domain: process.env.AUTH_COOKIE_DOMAIN.trim() } : {}) });
-    response.cookies.set("datatalk-last-login-method", "github", { httpOnly: false, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 365 * 24 * 60 * 60 });
+    response.cookies.set(AUTH_COOKIE_NAME, encodeAuthSession(user), authCookieOptions());
+    response.cookies.set("datatalk-last-login-method", "github", { ...authCookieOptions(), httpOnly: false, maxAge: 365 * 24 * 60 * 60 });
     response.cookies.delete("datatalk-github-state");
     response.cookies.delete("datatalk-github-next");
     return response;
