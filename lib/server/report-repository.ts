@@ -8,7 +8,9 @@ import { fromReportPageDocument } from "@/lib/report-types";
 import type { ReportCenterData, ReportDefinition, ReportFolder, ReportItem, ReportStatus } from "@/lib/report-types";
 import { reportFilterManifestFromDefinition, type ReportFilterManifest } from "@/lib/report-filters";
 import type { WebFileMap } from "@/lib/report-web";
+import { parseStoredDate } from "@/lib/server/db-time";
 import { getDbPool, withDatabaseReadRetry } from "@/lib/server/mysql";
+import { getSystemTimeZone } from "@/lib/server/system-settings";
 import { getWorkspaceHead, getWorkspaceStatus } from "@/lib/server/local-git";
 import { generatePublicLinkPassword, hashPublicLinkPassword, hasPublicLinkAccess } from "@/lib/server/public-link-security";
 import { readReportFilterManifest } from "@/lib/server/report-filter-runtime";
@@ -79,7 +81,7 @@ export type PublicLinkSettings = {
 
 function formatPublicLinkDate(value: string | Date | null | undefined) {
   if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseStoredDate(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
@@ -127,8 +129,8 @@ function normalizeAiConversation(row: ReportAiConversationRow): ReportAiConversa
   return {
     id: row.conversation_id,
     title: row.title,
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
+    createdAt: parseStoredDate(row.created_at).toISOString(),
+    updatedAt: parseStoredDate(row.updated_at).toISOString(),
     messageCount: 0,
   };
 }
@@ -228,17 +230,29 @@ export async function saveReportAiConversationIndex(input: {
   }
 }
 
+function startOfDayInTimeZone(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const valueOf = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  return Date.UTC(valueOf("year"), valueOf("month") - 1, valueOf("day"));
+}
+
 function formatUpdatedAt(value: string | Date) {
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseStoredDate(value);
   if (Number.isNaN(date.getTime())) {
     return String(value);
   }
 
-  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const today = new Date();
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const timeZone = getSystemTimeZone();
+  const time = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone });
   const oneDay = 24 * 60 * 60 * 1000;
+  const startOfToday = startOfDayInTimeZone(new Date(), timeZone);
+  const startOfDate = startOfDayInTimeZone(date, timeZone);
 
   if (startOfDate === startOfToday) {
     return `今天 ${time}`;
@@ -248,7 +262,10 @@ function formatUpdatedAt(value: string | Date) {
     return `昨天 ${time}`;
   }
 
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  const dateParts = new Intl.DateTimeFormat("zh-CN", { timeZone, month: "numeric", day: "numeric" }).formatToParts(date);
+  const month = dateParts.find((part) => part.type === "month")?.value ?? String(date.getMonth() + 1);
+  const day = dateParts.find((part) => part.type === "day")?.value ?? String(date.getDate());
+  return `${month}月${day}日 ${time}`;
 }
 
 function normalizeStatus(value: string): ReportStatus {
@@ -742,7 +759,7 @@ export async function updateReportPublicLink(input: {
         const password = input.resetPassword || !currentLink.password ? generatePublicLinkPassword() : currentLink.password;
         const passwordEnabled = input.passwordEnabled ?? Number(currentLink.password_enabled) === 1;
         const expiresAt = input.expiresAt === undefined
-          ? (currentLink.expires_at ? new Date(currentLink.expires_at) : null)
+          ? (currentLink.expires_at ? parseStoredDate(currentLink.expires_at) : null)
           : input.expiresAt;
 
         if (input.resetPassword || !currentLink.password || input.passwordEnabled !== undefined || input.expiresAt !== undefined) {

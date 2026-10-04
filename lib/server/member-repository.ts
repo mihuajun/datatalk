@@ -1,8 +1,10 @@
 import type { RowDataPacket } from "mysql2/promise";
 
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
+import { parseStoredDate } from "@/lib/server/db-time";
 import { createSalt, hashPassword } from "@/lib/server/password";
 import { getDbPool } from "@/lib/server/mysql";
+import { getSystemTimeZone } from "@/lib/server/system-settings";
 
 export type MemberRole = UserRole;
 
@@ -26,10 +28,16 @@ type MemberRow = RowDataPacket & {
   last_active?: string | Date | null;
 };
 
+function formatStoredTimestamp(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const parsed = parseStoredDate(value);
+  return Number.isNaN(parsed.getTime())
+    ? String(value)
+    : parsed.toLocaleString("zh-CN", { hour12: false, timeZone: getSystemTimeZone() });
+}
+
 function normalizeMember(row: MemberRow): MemberRecord {
-  const lastActive = row.last_active instanceof Date
-    ? row.last_active.toLocaleString("zh-CN", { hour12: false })
-    : row.last_active;
+  const lastActive = formatStoredTimestamp(row.last_active);
 
   return {
     id: Number(row.id),

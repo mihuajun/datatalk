@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 
+import { parseStoredDate } from "@/lib/server/db-time";
 import { getDbPool } from "@/lib/server/mysql";
 
 export type MetricKnowledgeDefinition = {
@@ -156,7 +157,7 @@ function metricView(row: MetricKnowledgeRow): MetricKnowledgeView {
     fingerprint: row.fingerprint,
     acceptedCount: Number(row.accepted_count || 0),
     rejectedCount: Number(row.rejected_count || 0),
-    updatedAt: new Date(row.updated_at).toISOString(),
+    updatedAt: parseStoredDate(row.updated_at).toISOString(),
   };
 }
 

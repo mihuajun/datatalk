@@ -52,6 +52,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ReportWebFrame } from "@/components/report-web-frame";
 import { PublicLinkPanel } from "@/components/reports/public-link-panel";
 import { ResourcePublishPanel } from "@/components/reports/resource-publish-panel";
+import { fetchSystemTimeZone, formatConversationTime as formatConversationTimeInZone, formatFullTime } from "@/lib/client-time";
 import { reportAiArtifactDownloadUrl, resolveReportAiSandboxArtifact, type ReportAiArtifact } from "@/lib/report-ai-artifacts";
 import { reportFilterManifestFromDefinition, reportFilterValuesToSearchParams, resolveReportFilterValues, type ReportFilterManifest } from "@/lib/report-filters";
 import { readSelectedElementContext, runtimeMessageMatchesPending, withSelectedElementContext, type ReportSelectedElement } from "@/lib/report-element-context";
@@ -1022,32 +1023,6 @@ function QuestionTimelineDisclosure({ node }: { node: Extract<AiTimelineNode, { 
   );
 }
 
-function formatConversationTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const dayOffset = Math.floor((startOfToday - startOfDate) / dayMs);
-
-  if (dayOffset === 0) {
-    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  }
-
-  if (dayOffset === 1) return "昨天";
-  if (dayOffset > 1 && dayOffset < 7) return `${dayOffset}天`;
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  if (date.getFullYear() === now.getFullYear()) return `${month}/${String(date.getDate()).padStart(2, "0")}`;
-  return `${String(date.getFullYear()).slice(-2)}/${month}`;
-}
-
-function formatConversationTimeTitle(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date.toLocaleString("zh-CN", { hour12: false });
-}
-
 function PendingQuestionComposer({
   pending,
   submitting,
@@ -1277,6 +1252,16 @@ function AiChatPanel({
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const conversationMenuRef = useRef<HTMLDivElement | null>(null);
   const [conversationMenuOpen, setConversationMenuOpen] = useState(false);
+  const [systemTimeZone, setSystemTimeZone] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSystemTimeZone().then((timeZone) => {
+      if (!cancelled && timeZone) setSystemTimeZone(timeZone);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedElements.length) chatTextareaRef.current?.focus();
@@ -1348,7 +1333,7 @@ function AiChatPanel({
             </button>
             {conversationMenuOpen ? <div role="listbox" aria-label="历史对话列表" className="absolute left-0 top-[calc(100%+6px)] z-40 max-h-64 w-full min-w-[220px] overflow-y-auto rounded-md border border-[#DDE5F0] bg-white p-1 shadow-[0_12px_28px_rgba(23,36,58,0.14)]">
               {conversations.map((conversation) => <button type="button" role="option" aria-selected={conversation.id === activeConversationId} key={conversation.id} onClick={() => { setConversationMenuOpen(false); onSelectConversation(conversation.id); }} className={`flex w-full items-center rounded px-2.5 py-2 text-left text-[11px] transition ${conversation.id === activeConversationId ? "bg-[#EDF3FF] font-semibold text-[#2167E8]" : "text-[#526174] hover:bg-[#F7F9FC]"}`}>
-                <time dateTime={conversation.updatedAt} title={formatConversationTimeTitle(conversation.updatedAt)} className="w-10 shrink-0 whitespace-nowrap text-[10px] font-normal tabular-nums text-[#98A2B3]">{formatConversationTime(conversation.updatedAt)}</time>
+                <time dateTime={conversation.updatedAt} title={formatFullTime(conversation.updatedAt, systemTimeZone)} className="w-10 shrink-0 whitespace-nowrap text-[10px] font-normal tabular-nums text-[#98A2B3]">{formatConversationTimeInZone(conversation.updatedAt, systemTimeZone)}</time>
                 <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
                 {conversation.id === activeConversationId ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
               </button>)}

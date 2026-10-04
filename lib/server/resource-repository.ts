@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import type { ResourceAssetType, ResourceCategoryOption, ResourceItemRecord, ResourceItemStatus } from "@/lib/resource-center-types";
+import { parseStoredDate } from "@/lib/server/db-time";
 import { getDbPool, withDatabaseReadRetry } from "@/lib/server/mysql";
 
 type ResourceCategoryRow = RowDataPacket & {
@@ -48,7 +49,7 @@ type PublishedResourceTargetRow = RowDataPacket & {
 
 function normalizeDate(value: string | Date | null | undefined) {
   if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseStoredDate(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
