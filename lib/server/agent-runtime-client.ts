@@ -781,6 +781,7 @@ async function runWebAgent(input: {
   onSessionReady?: (sessionId: string) => void | Promise<void>;
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
   onQuestionEvent?: (event: RuntimeQuestionEvent) => void | Promise<void>;
+  signal?: AbortSignal;
 }) {
   const status = await getAgentRuntimeStatus();
   if (!status.running) throw new Error("Agent Runtime 未运行，请先启动 Runtime");
@@ -799,6 +800,10 @@ async function runWebAgent(input: {
   const sessionId = session.sessionId;
   await input.onSessionReady?.(sessionId);
   const muxAbortController = new AbortController();
+  if (input.signal) {
+    if (input.signal.aborted) muxAbortController.abort();
+    else input.signal.addEventListener("abort", () => muxAbortController.abort(), { once: true });
+  }
   const deliveredQuestionEventIds = new Set<string>();
   const deliverQuestionEvent = async (frame: RuntimeQuestionEvent) => {
     if (frame.sessionId !== sessionId) return;
@@ -917,6 +922,7 @@ async function runWebAgent(input: {
   let lastRuntimeEventAt = Date.now();
   let settled = false;
   while (!settled) {
+    if (input.signal?.aborted) throw new Error("AGENT_RUNTIME_ABORTED");
     if (Date.now() - lastRuntimeEventAt >= AGENT_RUNTIME_IDLE_TIMEOUT_MS) {
       throw new Error("AGENT_RUNTIME_TIMEOUT");
     }
@@ -1019,6 +1025,7 @@ export async function requestReportAgentFromRuntime({
   onSessionReady,
   onEvent,
   onQuestionEvent,
+  signal,
 }: {
   message: string;
   images?: RuntimePromptImage[];
@@ -1031,8 +1038,9 @@ export async function requestReportAgentFromRuntime({
   onSessionReady?: (sessionId: string) => void | Promise<void>;
   onEvent?: (event: RuntimeEvent) => void | Promise<void>;
   onQuestionEvent?: (event: RuntimeQuestionEvent) => void | Promise<void>;
+  signal?: AbortSignal;
 }) {
-  const result = await runWebAgent({ message, images, attachments, workingDirectory, reportName, sessionId, tenantId, reportCode, onSessionReady, onEvent, onQuestionEvent });
+  const result = await runWebAgent({ message, images, attachments, workingDirectory, reportName, sessionId, tenantId, reportCode, onSessionReady, onEvent, onQuestionEvent, signal });
   return {
     output: result.output,
     dshSessionId: result.sessionId,
