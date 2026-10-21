@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import { getAuthSession } from "@/lib/server/auth-session";
 import { requestReportAgentFromRuntime, waitForRuntimeSessionTitle, type RuntimeEvent, type RuntimePromptImage, type RuntimeQuestionEvent } from "@/lib/server/agent-runtime-client";
 import { getAgentRuntimeStatus } from "@/lib/server/agent-runtime";
@@ -8,7 +11,7 @@ import { getReportAiConversation, getReportDetailByCode, readReportWorkspaceSnap
 import { getWorkspaceHead, getWorkspaceStatusEntries } from "@/lib/server/local-git";
 import { finalizeMetricKnowledgeProposals } from "@/lib/server/report-metric-knowledge-service";
 import { cleanupRuntimeAttachments, stageRuntimeAttachments, type RuntimeAttachmentInput } from "@/lib/server/report-runtime-attachments";
-import { getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
+import { getReportWorkspacePath, getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
 import { withReportAiWorkspaceCommitLock } from "@/lib/server/report-ai-workspace-lock";
 import { validateReportWorkspace } from "@/lib/server/report-schema";
 import { commitRuntimeWorkspaceChanges } from "@/lib/server/report-workspace-service";
@@ -388,6 +391,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           });
         };
 
+        // Write .generating marker so public pages can show "updating" status
+        try {
+          const releasesDir = path.join(getReportWorkspacePath(session.tenantId, reportCode), "releases");
+          await fs.mkdir(releasesDir, { recursive: true });
+          await fs.writeFile(path.join(releasesDir, ".generating"), new Date().toISOString());
+        } catch { /* ignore marker write failure */ }
+
         let runtimeResult = await requestReportAgentFromRuntime({
           message,
           images,
@@ -542,6 +552,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       } finally {
         disposePreviewClientRef.current?.();
         await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
+        // Remove .generating marker regardless of success/failure/cancel
+        try {
+          await fs.unlink(path.join(getReportWorkspacePath(session.tenantId, reportCode), "releases", ".generating"));
+        } catch { /* ignore marker removal failure */ }
         if (!clientDisconnected && controller.desiredSize !== null) controller.close();
       }
     },
