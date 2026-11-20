@@ -1,7 +1,10 @@
+import { ensureMetricGovernanceSchema } from "@/lib/server/metric-governance-schema";
+import { getDbPool } from "@/lib/server/mysql";
 import mysql, { type Connection, type RowDataPacket } from "mysql2/promise";
 
 import { getDatabaseConfig } from "@/lib/server/database-config";
 import { createSalt, hashPassword } from "@/lib/server/password";
+import { generatePublicLinkPassword } from "@/lib/server/public-link-security";
 import { RELEASE_CATEGORY_DEFAULTS } from "@/lib/server/release-category-defaults";
 import { RESOURCE_CATEGORY_DEFAULTS } from "@/lib/server/resource-category-defaults";
 import { initializeSqliteDatabase } from "@/lib/server/sqlite-bootstrap";
@@ -28,6 +31,34 @@ async function addColumnIfMissing(connection: Connection, tableName: string, col
     return true;
   }
   return false;
+}
+
+async function ensurePublicLinkPasswordColumn(connection: Connection) {
+  const [columns] = await connection.query<RowDataPacket[]>("SHOW FULL COLUMNS FROM report_public_link LIKE 'password'");
+  const passwordColumn = columns[0];
+  if (!passwordColumn) return;
+
+  if (passwordColumn.Null === "YES") {
+    const [rows] = await connection.query<Array<RowDataPacket & { id: number }>>(
+      "SELECT id FROM report_public_link WHERE password IS NULL",
+    );
+    for (const row of rows) {
+      await connection.execute("UPDATE report_public_link SET password = ? WHERE id = ? AND password IS NULL", [
+        generatePublicLinkPassword(),
+        row.id,
+      ]);
+    }
+  }
+
+  if (
+    String(passwordColumn.Type).toLowerCase() !== "varchar(20)" ||
+    passwordColumn.Collation !== "utf8mb4_bin" ||
+    passwordColumn.Null !== "NO"
+  ) {
+    await connection.query(
+      "ALTER TABLE report_public_link MODIFY password varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL",
+    );
+  }
 }
 
 async function addIndexIfMissing(connection: Connection, tableName: string, indexName: string, definition: string) {
@@ -144,6 +175,7 @@ async function ensureTenantUserTable(connection: Connection) {
       id bigint unsigned NOT NULL AUTO_INCREMENT,
       tenant_id bigint unsigned NOT NULL,
       name varchar(80) NOT NULL,
+      avatar varchar(2048) NULL,
       username varchar(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
       phone varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL,
       email varchar(160) NULL,
@@ -162,6 +194,7 @@ async function ensureTenantUserTable(connection: Connection) {
   `);
 
   await addColumnIfMissing(connection, "tenant_user", "email", "varchar(160) NULL AFTER username");
+  await addColumnIfMissing(connection, "tenant_user", "avatar", "varchar(2048) NULL AFTER name");
   await addColumnIfMissing(connection, "tenant_user", "phone", "varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER username");
   await addColumnIfMissing(connection, "tenant_user", "role", "varchar(20) NOT NULL DEFAULT 'developer' AFTER email");
   await addColumnIfMissing(connection, "tenant_user", "last_active", "timestamp NULL AFTER status");
@@ -176,6 +209,28 @@ async function ensureTenantUserTable(connection: Connection) {
         END
       WHERE LOWER(TRIM(role)) IN ('administrator', 'adminstrator', 'super_admin', 'superadmin')
          OR role IN ('超级管理员', '管理员', '租户管理员', '开发者')`,
+  );
+}
+
+async function ensureConversationQuotaTable(connection: Connection) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS studio_conversation_quota (
+      tenant_id bigint unsigned NOT NULL,
+      available_count int unsigned NOT NULL DEFAULT 0,
+      granted_count int unsigned NOT NULL DEFAULT 0,
+      consumed_count int unsigned NOT NULL DEFAULT 0,
+      created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (tenant_id),
+      CONSTRAINT chk_studio_conversation_quota_nonnegative CHECK (available_count >= 0)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // Existing tenants receive the one-time historical grant. Existing quota rows
+  // are deliberately preserved across subsequent bootstrap runs.
+  await connection.execute(
+    `INSERT IGNORE INTO studio_conversation_quota (tenant_id, available_count, granted_count)
+     SELECT id, 10, 10 FROM tenant`,
   );
 }
 
@@ -266,7 +321,7 @@ async function ensureReportTables(connection: Connection) {
       short_code varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
       enabled tinyint NOT NULL DEFAULT 1,
       password_enabled tinyint NOT NULL DEFAULT 0,
-      password varchar(4) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+      password varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
       expires_at datetime NULL,
       created_by bigint unsigned NULL,
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -365,7 +420,8 @@ async function ensureReportTables(connection: Connection) {
   await addColumnIfMissing(connection, "tenant_report", "deleted_by", "bigint unsigned NULL");
   await addColumnIfMissing(connection, "report_ai_conversation", "dsh_session_id", "varchar(160) CHARACTER SET ascii COLLATE ascii_bin NULL");
   await addColumnIfMissing(connection, "report_public_link", "password_enabled", "tinyint NOT NULL DEFAULT 0");
-  await addColumnIfMissing(connection, "report_public_link", "password", "varchar(4) CHARACTER SET ascii COLLATE ascii_bin NULL");
+  await addColumnIfMissing(connection, "report_public_link", "password", "varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL");
+  await ensurePublicLinkPasswordColumn(connection);
   await addColumnIfMissing(connection, "report_public_link", "expires_at", "datetime NULL");
   await addColumnIfMissing(connection, "report_release", "thumbnail_url", "varchar(500) NULL AFTER source_commit_hash");
   await addColumnIfMissing(connection, "report_release", "publisher_tenant_name", "varchar(120) NULL AFTER thumbnail_url");
@@ -551,15 +607,17 @@ async function ensureMetricKnowledgeTables(connection: Connection) {
       normalized_name varchar(160) NOT NULL,
       aliases_json json NOT NULL,
       normalized_aliases_json json NOT NULL,
-      search_text text NOT NULL,
-      definition_json json NOT NULL,
-      status varchar(20) NOT NULL DEFAULT 'verified',
+      search_text longtext NOT NULL,
+      content longtext NOT NULL,
+      keywords_json json NOT NULL,
+      status varchar(20) NOT NULL DEFAULT 'active',
       version int unsigned NOT NULL DEFAULT 1,
       fingerprint char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
       source_report_code varchar(50) CHARACTER SET ascii COLLATE ascii_bin NULL,
       source_conversation_id varchar(80) CHARACTER SET ascii COLLATE ascii_bin NULL,
       source_op_id varchar(80) CHARACTER SET ascii COLLATE ascii_bin NULL,
       created_by bigint unsigned NULL,
+      updated_by bigint unsigned NULL,
       accepted_count int unsigned NOT NULL DEFAULT 0,
       rejected_count int unsigned NOT NULL DEFAULT 0,
       last_used_at timestamp NULL,
@@ -572,6 +630,7 @@ async function ensureMetricKnowledgeTables(connection: Connection) {
       KEY idx_metric_tenant_fingerprint (tenant_id, fingerprint)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  await addColumnIfMissing(connection, "tenant_metric_knowledge", "updated_by", "bigint unsigned NULL AFTER created_by");
   await connection.query(`
     CREATE TABLE IF NOT EXISTS report_metric_knowledge_proposal (
       id bigint unsigned NOT NULL AUTO_INCREMENT,
@@ -585,7 +644,8 @@ async function ensureMetricKnowledgeTables(connection: Connection) {
       normalized_name varchar(160) NOT NULL,
       aliases_json json NOT NULL,
       normalized_aliases_json json NOT NULL,
-      definition_json json NOT NULL,
+      content longtext NOT NULL,
+      keywords_json json NOT NULL,
       fingerprint char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
       action varchar(20) NOT NULL,
       confirmed tinyint NOT NULL DEFAULT 0,
@@ -595,6 +655,7 @@ async function ensureMetricKnowledgeTables(connection: Connection) {
       published_version int unsigned NULL,
       source_op_id varchar(80) CHARACTER SET ascii COLLATE ascii_bin NULL,
       created_by bigint unsigned NULL,
+      updated_by bigint unsigned NULL,
       created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
@@ -603,6 +664,7 @@ async function ensureMetricKnowledgeTables(connection: Connection) {
       KEY idx_metric_proposal_metric (tenant_id, metric_key, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+  await addColumnIfMissing(connection, "report_metric_knowledge_proposal", "updated_by", "bigint unsigned NULL AFTER created_by");
   await connection.query(`
     CREATE TABLE IF NOT EXISTS tenant_bi_feedback (
       id bigint unsigned NOT NULL AUTO_INCREMENT,
@@ -787,6 +849,7 @@ async function runBootstrap() {
   const config = getDatabaseConfig();
   if (config.kind === "sqlite") {
     await initializeSqliteDatabase(config);
+    await ensureMetricGovernanceSchema(getDbPool(), true);
     return;
   }
 
@@ -803,11 +866,13 @@ async function runBootstrap() {
   try {
     await ensureTenantTable(connection);
     await ensureTenantUserTable(connection);
+    await ensureConversationQuotaTable(connection);
     await ensureUserIdentityTable(connection);
     await ensureReportTables(connection);
     await ensureResourceTables(connection);
     await ensureDataSourceTables(connection);
     await ensureMetricKnowledgeTables(connection);
+    await ensureMetricGovernanceSchema(getDbPool(), false);
     await ensureDefaultUsers(connection);
     await ensureDefaultReleaseCategories(connection);
     await ensureDefaultResourceCategories(connection);

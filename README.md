@@ -1,5 +1,7 @@
 # DataTalk Studio
 
+DataTalk Studio is an AI-native workspace for data analysis and report development. Connect business data, analyze it through conversation, and turn results into reusable reports and dashboards.
+
 [中文](README.zh-CN.md) | **English**
 
 > Build reports through conversation. DataTalk Studio is an AI-native BI workspace for building, editing, validating, sharing, and reusing data reports.

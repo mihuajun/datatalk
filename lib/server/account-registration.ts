@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
 import { getDbPool } from "@/lib/server/mysql";
 import { createSalt, hashPassword } from "@/lib/server/password";
+import { grantSignupConversationQuota } from "@/lib/server/conversation-quota";
 
 export type RegistrationInput = {
   username: string;
@@ -60,6 +61,7 @@ export async function registerAccount(input: RegistrationInput): Promise<Registe
        VALUES (?, ?, ?, ?, ?, 'developer', ?, ?, 1, CURRENT_TIMESTAMP)`,
       [tenantId, name, input.username, phone, email, hashPassword(input.password, salt), salt],
     );
+    await grantSignupConversationQuota(connection, tenantId);
     await connection.commit();
     return {
       userId: Number((userResult as { insertId: number }).insertId),

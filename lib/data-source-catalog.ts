@@ -1,4 +1,4 @@
-export type ConnectorCategory = "关系型数据库" | "分析型数据库" | "文档、缓存与搜索" | "接口连接器";
+export type ConnectorCategory = "关系型数据库" | "分析型数据库" | "文档、缓存与搜索" | "接口连接器" | "应用数据";
 
 export type ConnectorCatalogItem = {
   type: string;
@@ -95,6 +95,15 @@ export const CONNECTOR_CATALOG: ConnectorCatalogItem[] = [
 
   connector("REST API", "接口连接器", "通过只读 HTTP 接口接入广告、CRM 与工单系统。", ["http", "api", "接口"], "swagger", "#85EA2D", "API"),
   connector("GraphQL", "接口连接器", "按需获取结构化业务数据的 API 查询协议。", ["api", "graphql", "接口"], "graphql", "#E10098", "GQL"),
+
+  connector("美团", "应用数据", "美团应用数据接入，待开放。", ["meituan", "美团", "应用数据"], "meituan", "#9A6700", "美团"),
+  connector("抖音", "应用数据", "抖音应用数据接入，待开放。", ["douyin", "抖音", "应用数据"], "douyin", "#161823", "抖音"),
+  connector("企微", "应用数据", "企业微信应用数据接入，待开放。", ["企业微信", "wecom", "wework", "qiwei", "应用数据"], "wecom", "#2B7BD6", "企微"),
+  connector("飞书", "应用数据", "飞书应用数据接入，待开放。", ["feishu", "lark", "飞书", "应用数据"], "feishu", "#3370FF", "飞书"),
+  connector("宏脉", "应用数据", "宏脉应用数据接入，待开放。", ["hongmai", "宏脉", "应用数据"], "hongmai", "#7355C8", "宏脉"),
+  connector("领健", "应用数据", "领健应用数据接入，待开放。", ["lingjian", "领健", "应用数据"], "lingjian", "#078579", "领健"),
+  connector("岚时", "应用数据", "岚时应用数据接入，待开放。", ["lanshi", "岚时", "应用数据"], "lanshi", "#476AB5", "岚时"),
+  connector("哪吒", "应用数据", "哪吒应用数据接入，待开放。", ["nezha", "nazha", "哪吒", "应用数据"], "nezha", "#C34F32", "哪吒"),
 ];
 
 export const CONNECTOR_CATEGORIES: ConnectorCategory[] = [
@@ -102,4 +111,5 @@ export const CONNECTOR_CATEGORIES: ConnectorCategory[] = [
   "分析型数据库",
   "文档、缓存与搜索",
   "接口连接器",
+  "应用数据",
 ];

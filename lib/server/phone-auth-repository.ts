@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2/promise";
 
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
 import { getDbPool } from "@/lib/server/mysql";
+import { grantSignupConversationQuota } from "@/lib/server/conversation-quota";
 
 type PhoneUserRow = RowDataPacket & {
   id: number;
@@ -71,6 +72,7 @@ export async function findOrCreatePhoneUser(phone: string) {
       [tenantId, displayName, username, phone],
     );
     const userId = Number((userResult as { insertId: number }).insertId);
+    await grantSignupConversationQuota(connection, tenantId);
     await connection.commit();
     return {
       userId,

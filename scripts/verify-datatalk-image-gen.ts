@@ -18,7 +18,7 @@ assert.deepEqual(defaults, {
   size: "1024x1024",
   quality: "medium",
   background: "auto",
-  outputFormat: "webp",
+  outputFormat: "png",
 });
 
 assert.throws(() => normalizeDataTalkImageGenerationInput({ prompt: "" }), /IMAGE_PROMPT_REQUIRED/);
@@ -76,6 +76,11 @@ assert.doesNotMatch(pluginSource, /process\.cwd\s*\(/);
 const skillSource = fs.readFileSync(path.join(root, "skills", "datatalk-image-gen", "SKILL.md"), "utf8");
 assert.match(skillSource, /^---\nname: datatalk-image-gen\n/m);
 assert.match(skillSource, /saveMode=report_asset/);
+assert.match(skillSource, /outputFormat=png/);
+assert.match(pluginSource, /默认 png/);
+for (const outputFormat of ["png", "webp", "jpeg"] as const) {
+  assert.equal(normalizeDataTalkImageGenerationInput({ prompt: "test", outputFormat }).outputFormat, outputFormat);
+}
 assert.match(skillSource, /inspect_report_preview/);
 
 console.log("DataTalk image generation contract passed");

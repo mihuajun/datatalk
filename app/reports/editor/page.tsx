@@ -21,6 +21,7 @@ import {
   Link2,
   LineChart,
   LoaderCircle,
+  Maximize2,
   MessageCircle,
   Minus,
   MousePointer2,
@@ -50,7 +51,9 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ReportWebFrame } from "@/components/report-web-frame";
+import { useReportDocumentTitle } from "@/components/reports/report-document-title";
 import { PublicLinkPanel } from "@/components/reports/public-link-panel";
+import { ReportDownloadMenu, ReportDownloadFeedback, useReportDownload } from "@/components/reports/report-download-menu";
 import { ResourcePublishPanel } from "@/components/reports/resource-publish-panel";
 import { reportAiArtifactDownloadUrl, resolveReportAiSandboxArtifact, type ReportAiArtifact } from "@/lib/report-ai-artifacts";
 import { reportFilterManifestFromDefinition, reportFilterValuesToSearchParams, resolveReportFilterValues, type ReportFilterManifest } from "@/lib/report-filters";
@@ -1212,6 +1215,10 @@ function PendingQuestionComposer({
 }
 
 function AiChatPanel({
+  displayMode = "sidebar",
+  onMinimize,
+  onMaximize,
+  onToggleConversation,
   reportCode,
   timeline,
   streaming,
@@ -1242,6 +1249,10 @@ function AiChatPanel({
   onSelectConversation,
   onNewConversation,
 }: {
+  displayMode?: "sidebar" | "floating" | "composer";
+  onMinimize?: () => void;
+  onMaximize?: () => void;
+  onToggleConversation?: () => void;
   reportCode: string | null;
   timeline: AiTimelineNode[];
   streaming: boolean;
@@ -1334,14 +1345,16 @@ function AiChatPanel({
     : "新会话";
   const attachmentCount = chatImages.length + chatFiles.length;
   const attachmentSummary = attachmentCount > 0 ? `${attachmentCount} 个附件` : "";
+  const hideQuotaErrorInComposer = displayMode === "composer" && /对话次数已用完|配额不足/.test(error);
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-[#DDE5F0] bg-white">
-      <div className="border-b border-[#E7EDF5] px-4 py-3">
+    <aside className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-white ${displayMode === "sidebar" ? "h-full border-r border-[#DDE5F0]" : displayMode === "floating" ? "h-full rounded-lg border border-[#E5EAF1] shadow-[0_8px_24px_rgba(23,36,58,0.10)]" : selectedElements.length ? "rounded-2xl border border-[#E3E8EF] shadow-[0_4px_16px_rgba(23,36,58,0.08)]" : "rounded-full border border-[#E3E8EF] shadow-[0_4px_16px_rgba(23,36,58,0.08)]"}`}>
+      {displayMode !== "composer" ? <>
+      <div className={`border-b border-[#E7EDF5] px-4 ${displayMode === "floating" ? "py-2" : "py-3"}`}>
         <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><Sparkles className="h-4 w-4" /></span>
-          <div className="min-w-0 shrink-0 text-[13px] font-bold text-[#17243A]">AI 对话</div>
-          <div ref={conversationMenuRef} className="relative min-w-0 flex-1">
+          <span className={`flex items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8] ${displayMode === "floating" ? "h-7 w-7" : "h-8 w-8"}`}><Sparkles className={displayMode === "floating" ? "h-3.5 w-3.5" : "h-4 w-4"} /></span>
+          <div className={`min-w-0 shrink-0 font-bold text-[#17243A] ${displayMode === "floating" ? "text-[12px]" : "text-[13px]"}`}>AI 对话</div>
+          {displayMode === "sidebar" ? <div ref={conversationMenuRef} className="relative min-w-0 flex-1">
             <button type="button" onClick={() => setConversationMenuOpen((current) => !current)} disabled={streaming || conversationLoading} className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-[#DDE5F0] bg-white px-2.5 text-left text-[11px] text-[#526174] outline-none transition hover:border-[#B8D1FA] focus:border-[#8DB7F8] disabled:cursor-wait disabled:opacity-60" aria-label="历史对话" aria-haspopup="listbox" aria-expanded={conversationMenuOpen}>
               <span className="min-w-0 flex-1 truncate">{selectedConversationTitle}</span>
               <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-[#98A2B3] transition-transform ${conversationMenuOpen ? "rotate-180 text-[#2167E8]" : ""}`} />
@@ -1353,11 +1366,13 @@ function AiChatPanel({
                 {conversation.id === activeConversationId ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
               </button>)}
             </div> : null}
-          </div>
-          <button type="button" onClick={onNewConversation} disabled={streaming || conversationLoading} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#526174] hover:bg-[#EDF3FF] hover:text-[#2167E8] disabled:cursor-not-allowed disabled:opacity-50" aria-label="新建 AI 对话" title="新建 AI 对话"><Plus className="h-4 w-4" /></button>
+          </div> : <div className="min-w-0 flex-1" />}
+          <button type="button" onClick={onNewConversation} disabled={streaming || conversationLoading} className={`flex shrink-0 items-center justify-center rounded-md text-[#526174] hover:bg-[#EDF3FF] hover:text-[#2167E8] disabled:cursor-not-allowed disabled:opacity-50 ${displayMode === "floating" ? "h-6 w-6" : "h-7 w-7"}`} aria-label="新建 AI 对话" title="新建 AI 对话"><Plus className={displayMode === "floating" ? "h-3.5 w-3.5" : "h-4 w-4"} /></button>
+          {displayMode === "floating" && onMinimize ? <button type="button" onClick={onMinimize} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#8792A2] hover:bg-[#F3F5F8]" aria-label="收起 AI 对话" title="收起"><Minus className="h-3.5 w-3.5" /></button> : null}
+          {displayMode === "floating" && onMaximize ? <button type="button" onClick={onMaximize} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#8792A2] hover:bg-[#F3F5F8]" aria-label="展开完整 AI 对话侧栏" title="展开完整对话"><Maximize2 className="h-3.5 w-3.5" /></button> : null}
         </div>
       </div>
-      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[#F8FAFD] px-4 py-4">
+      <div ref={scrollContainerRef} className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto ${displayMode === "floating" ? "bg-white px-3 py-3" : "bg-[#F8FAFD] px-4 py-4"}`}>
         <div className="min-w-0 space-y-4">
           {timeline.map((node) => node.kind === "user" ? (
             <div key={node.id} className="flex min-w-0 justify-end">
@@ -1464,7 +1479,8 @@ function AiChatPanel({
           <div ref={scrollAnchorRef} />
         </div>
       </div>
-      <div className="relative z-10 min-w-0 shrink-0 overflow-hidden border-t border-[#E7EDF5] bg-white px-3 pb-4 pt-3">
+      </> : null}
+      {displayMode !== "floating" ? <div className={`relative z-10 min-w-0 shrink-0 overflow-hidden bg-white ${displayMode === "composer" ? selectedElements.length ? "px-2 py-2" : "rounded-full px-2 py-1" : "border-t border-[#E7EDF5] px-3 pb-4 pt-3"}`}>
         {pendingQuestion ? (
           <PendingQuestionComposer
             key={pendingQuestion.rpcId}
@@ -1476,7 +1492,12 @@ function AiChatPanel({
           />
         ) : (
           <>
-            {error ? <div role="alert" className="mb-2 break-words rounded-md border border-[#F5D4CC] bg-[#FFF8F6] px-2.5 py-2 text-[11px] leading-5 text-[#B42318]">{error}</div> : null}
+            {displayMode === "composer" && selectedElements.length ? <div className="mb-1 flex min-w-0 items-center gap-1.5 px-2 text-[11px] text-[#526174]">
+              <ScanSearch className="h-3.5 w-3.5 shrink-0 text-[#2167E8]" />
+              <span className="min-w-0 flex-1 truncate" title={selectedElements.map((element) => element.text || element.selector).join("\n")}>{selectedElements.length === 1 ? `已选：${selectedElements[0].text || `<${selectedElements[0].tag}>`}` : `已选 ${selectedElements.length} 个页面元素`}</span>
+              <button type="button" onClick={onClearSelectedElements} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#98A2B3] hover:bg-[#F1F4F8] hover:text-[#526174]" aria-label="清除已选页面元素" title="清除已选页面元素"><X className="h-3 w-3" /></button>
+            </div> : null}
+            {error && !hideQuotaErrorInComposer ? <div role="alert" className="mb-2 break-words rounded-md border border-[#F5D4CC] bg-[#FFF8F6] px-2.5 py-2 text-[11px] leading-5 text-[#B42318]">{error}</div> : null}
             {pendingMessages.some((pendingMessage) => pendingMessage.queued) ? <div className="mb-2 space-y-1.5" aria-label="待发送消息">
               {pendingMessages.filter((pendingMessage) => pendingMessage.queued).map((pendingMessage) => {
                 const visible = readSelectedElementContext(pendingMessage.message);
@@ -1486,10 +1507,11 @@ function AiChatPanel({
                   <span className="shrink-0 text-[10px] text-[#98A2B3]">待发送</span>
                 </div>})}
             </div> : null}
-            <div className="mb-2 flex items-center gap-1.5 text-[10px] text-[#98A2B3]"><MessageCircle className="h-3.5 w-3.5" />询问或修改这份报表</div>
-            <form onSubmit={onSubmit} className="min-w-0 rounded-md border border-[#DDE5F0] bg-[#FAFCFF] p-2 focus-within:border-[#8DB7F8]">
+            {displayMode === "sidebar" ? <div className="mb-2 flex items-center gap-1.5 text-[10px] text-[#98A2B3]"><MessageCircle className="h-3.5 w-3.5" />询问或修改这份报表</div> : null}
+            <form onSubmit={onSubmit} className={`min-w-0 ${displayMode === "composer" ? "flex items-center gap-1 rounded-full border-0 bg-transparent px-1 py-0" : "rounded-md border border-[#DDE5F0] bg-[#FAFCFF] p-2 focus-within:border-[#8DB7F8]"}`}>
               <input type="file" accept={aiAttachmentAccept} multiple onChange={onPickAttachments} className="hidden" id="report-ai-attachment-input" />
-              {selectedElements.length ? <div className="mb-2 min-w-0 border-b border-[#DDE5F0] pb-2 text-[11px] text-[#2167E8]">
+              {displayMode === "composer" && onToggleConversation ? <button type="button" onClick={onToggleConversation} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#657286] hover:bg-[#F1F4F8] hover:text-[#2167E8]" aria-label="展开或收起对话内容" title="展开或收起对话内容"><MessageCircle className="h-4 w-4" /></button> : null}
+              {selectedElements.length && displayMode !== "composer" ? <div className="mb-2 min-w-0 border-b border-[#DDE5F0] pb-2 text-[11px] text-[#2167E8]">
                 <div className="mb-1 flex items-center gap-1.5"><ScanSearch className="h-3.5 w-3.5 shrink-0" /><span className="flex-1 font-semibold">选中 {selectedElements.length}</span><button type="button" onClick={onClearSelectedElements} className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-[#EDF3FF]" aria-label="清除所有选中元素" title="清除所有选中元素"><X className="h-3.5 w-3.5" /></button></div>
                 <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
                   {selectedElements.map((element) => <span key={element.selector} className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 rounded border border-[#C9DAF5] bg-white px-1.5 text-[#344054]" title={element.selector}><span className="min-w-0 max-w-[190px] truncate">{element.text || `<${element.tag}>`}</span><button type="button" onClick={() => onRemoveSelectedElement(element.selector)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#667085] hover:bg-[#EDF3FF] hover:text-[#2167E8]" aria-label={`移除选中元素 ${element.text || element.selector}`} title="移除选中元素"><X className="h-3 w-3" /></button></span>)}
@@ -1499,20 +1521,21 @@ function AiChatPanel({
                 {chatImages.map((image) => <div key={image.id} className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-[#DDE5F0] bg-white"><img src={image.previewUrl} alt={image.name || "待发送附件"} className="h-full w-full object-cover" /><button type="button" onClick={() => onRemoveImage(image.id)} className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#17243A]/75 text-white opacity-0 transition group-hover:opacity-100" aria-label={`移除附件${image.name ? ` ${image.name}` : ""}`} title="移除附件"><X className="h-3 w-3" /></button></div>)}
                 {chatFiles.map((attachment) => <div key={attachment.id} className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-[#DDE5F0] bg-white px-2 py-1.5 text-[#526174]" title={`${attachment.file.name}（${formatAiFileSize(attachment.file.size)}）`}><FileText className="h-3.5 w-3.5 shrink-0 text-[#2167E8]" /><span className="min-w-0 max-w-[150px] truncate text-[10px]">{attachment.file.name}</span><span className="shrink-0 text-[10px] text-[#98A2B3]">{formatAiFileSize(attachment.file.size)}</span><button type="button" onClick={() => onRemoveFile(attachment.id)} className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#98A2B3] hover:bg-[#F3F6FA] hover:text-[#B42318]" aria-label={`移除附件 ${attachment.file.name}`} title="移除附件"><X className="h-3 w-3" /></button></div>)}
               </div> : null}
-              <textarea ref={chatTextareaRef} value={chatInput} onChange={(event) => onInputChange(event.target.value)} onPaste={onPaste} onKeyDown={(event) => { if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return; event.preventDefault(); event.currentTarget.form?.requestSubmit(); }} rows={2} className="min-h-[42px] w-full resize-none border-0 bg-transparent px-1 text-xs leading-5 text-[#344054] outline-none placeholder:text-[#98A2B3]" placeholder="描述要生成或修改的报表内容" aria-label="询问或修改报表" />
-              <div className="mt-1 flex items-center justify-between gap-2">
+              <textarea ref={chatTextareaRef} value={chatInput} onChange={(event) => onInputChange(event.target.value)} onPaste={onPaste} onKeyDown={(event) => { if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return; event.preventDefault(); event.currentTarget.form?.requestSubmit(); }} rows={displayMode === "composer" ? 1 : 2} className={`${displayMode === "composer" ? "h-[34px] min-h-[34px] flex-1 px-2 py-[7px]" : "min-h-[42px] w-full px-1"} resize-none border-0 bg-transparent text-xs leading-5 text-[#344054] outline-none placeholder:text-[#98A2B3]`} placeholder="描述要生成或修改的报表内容" aria-label="询问或修改报表" />
+              <div className={`${displayMode === "composer" ? "flex shrink-0 items-center" : "mt-1 flex items-center justify-between gap-2"}`}>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <label htmlFor="report-ai-attachment-input" className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-[#526174] hover:bg-[#EDF3FF] hover:text-[#2167E8]" aria-label="添加附件" title="添加附件"><Paperclip className="h-4 w-4" /></label>
+                  {displayMode !== "composer" ? <label htmlFor="report-ai-attachment-input" className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-[#526174] hover:bg-[#EDF3FF] hover:text-[#2167E8]" aria-label="添加附件" title="添加附件"><Paperclip className="h-4 w-4" /></label> : null}
                 </div>
                 {attachmentSummary ? <span className="min-w-0 flex-1 truncate text-[10px] text-[#98A2B3]">{attachmentSummary}待发送</span> : <span className="flex-1" />}
-                <div className="flex shrink-0 items-center gap-1">
+                {displayMode !== "composer" ? <div className="flex shrink-0 items-center gap-1">
                   {streaming ? <button type="button" onClick={onStop} disabled={stopping} className="flex h-8 w-8 items-center justify-center rounded-md border border-[#F5D4CC] bg-[#FFF8F6] text-[#B42318] hover:bg-[#FDECE8] disabled:cursor-wait disabled:opacity-50" aria-label="停止 AI 任务" title="停止 AI 任务"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0} className="flex h-8 w-8 items-center justify-center rounded-md bg-[#2167E8] text-white hover:bg-[#1858CC] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>}
-                </div>
+                </div> : null}
+                {displayMode === "composer" ? (streaming ? <button type="button" onClick={onStop} disabled={stopping} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#FFF1EE] text-[#B42318] hover:bg-[#FDE6E1] disabled:cursor-wait disabled:opacity-50" aria-label="停止 AI 任务" title="停止"><Square className="h-3.5 w-3.5 fill-current" /></button> : <button type="submit" disabled={!chatInput.trim() && chatImages.length === 0 && chatFiles.length === 0} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F4F8] text-[#657286] hover:bg-[#E9EEF5] disabled:cursor-not-allowed disabled:opacity-50" aria-label="发送报表请求" title="发送"><Send className="h-3.5 w-3.5" /></button>) : null}
               </div>
             </form>
           </>
         )}
-      </div>
+      </div> : null}
     </aside>
   );
 }
@@ -2777,12 +2800,14 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const router = useRouter();
   const currentSearchParams = useSearchParams();
   const [report, setReport] = useState<ReportItem | null>(null);
+  useReportDocumentTitle(report?.name);
   const [definition, setDefinition] = useState<ReportDefinition | null>(null);
   const [webFiles, setWebFiles] = useState<WebFileMap>({});
   const [workspaceFingerprint, setWorkspaceFingerprint] = useState("");
   const initialCommitHash = useRef<string | null>(null);
   const reportLoadStartedFor = useRef<string | null>(null);
   const sourceCopyStartedFor = useRef<string | null>(null);
+  const workBuddyActionHandledRef = useRef<string | null>(null);
   const [currentWorkingCommit, setCurrentWorkingCommit] = useState<string | null>(null);
   const [publishedCommitHash, setPublishedCommitHash] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<ReportHistoryEntry[]>([]);
@@ -2790,6 +2815,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const historyEntriesRef = useRef<ReportHistoryEntry[]>([]);
   const historyIndexRef = useRef(-1);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const historyBusyRef = useRef(false);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>("trend");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2859,6 +2885,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const [contentRefreshKey, setContentRefreshKey] = useState(0);
   const [contentRefreshing, setContentRefreshing] = useState(false);
   const [aiPanelVisible, setAiPanelVisible] = useState(true);
+  const [floatingChatExpanded, setFloatingChatExpanded] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(defaultAiPanelWidth);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [resizingAiPanel, setResizingAiPanel] = useState(false);
@@ -2869,6 +2896,9 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   const publicLinkOverlayRef = useRef<HTMLDivElement | null>(null);
   const resourcePanelRef = useRef<HTMLDivElement | null>(null);
   const webPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const reportDownload = useReportDownload();
+  const [downloadMenuVisible, setDownloadMenuVisible] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
   const reportCanvasFocusControllerRef = useRef<ReportCanvasFocusController | null>(null);
   const previewRefreshPendingRef = useRef(false);
   const workspaceFingerprintRef = useRef("");
@@ -3377,6 +3407,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
           filterManifest?: ReportFilterManifest | null;
           webFiles?: WebFileMap;
           workspaceFingerprint?: string;
+          editHistory?: { initialCommitHash: string | null; entries: ReportHistoryEntry[] };
           workingCommitHash?: string | null;
           publishedCommitHash?: string | null;
           publicLinkCode?: string | null;
@@ -3408,13 +3439,14 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
         setWebFiles(result.webFiles || {});
         workspaceFingerprintRef.current = result.workspaceFingerprint || "";
         setWorkspaceFingerprint(workspaceFingerprintRef.current);
-        initialCommitHash.current = result.workingCommitHash || null;
+        initialCommitHash.current = result.editHistory?.initialCommitHash || result.workingCommitHash || null;
         setCurrentWorkingCommit(result.workingCommitHash || null);
         setPublishedCommitHash(result.publishedCommitHash || null);
-        historyEntriesRef.current = [];
-        historyIndexRef.current = -1;
-        setHistoryEntries([]);
-        setHistoryIndex(-1);
+        const loadedEntries = result.editHistory?.entries || [];
+        historyEntriesRef.current = loadedEntries;
+        historyIndexRef.current = loadedEntries.length - 1;
+        setHistoryEntries(loadedEntries);
+        setHistoryIndex(loadedEntries.length - 1);
         setSavedAt(result.report.updatedAt);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "报表数据暂时不可用");
@@ -3521,7 +3553,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   }
 
   function recordHistory(commitHash: string | null | undefined, auditId: number | null | undefined, label: string) {
-    if (!commitHash) return;
+    if (!commitHash || historyEntriesRef.current[historyIndexRef.current]?.commitHash === commitHash) return;
     setCurrentWorkingCommit(commitHash);
     const nextEntry: ReportHistoryEntry = { commitHash, auditId: auditId ?? null, label };
     const nextEntries = [...historyEntriesRef.current.slice(0, historyIndexRef.current + 1), nextEntry];
@@ -3532,8 +3564,8 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
   }
 
   async function moveHistory(direction: -1 | 1) {
-    if (historyBusy || !lockToken || !normalizedReportCode) return;
-    const targetIndex = historyIndex + direction;
+    if (historyBusyRef.current || aiStreaming || !lockToken || !normalizedReportCode) return;
+    const targetIndex = historyIndexRef.current + direction;
     if (targetIndex < -1 || targetIndex >= historyEntries.length) return;
     const targetCommitHash = targetIndex < 0 ? initialCommitHash.current : historyEntries[targetIndex]?.commitHash;
     if (!targetCommitHash) {
@@ -3541,6 +3573,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       return;
     }
 
+    historyBusyRef.current = true;
     setHistoryBusy(true);
     setError("");
     try {
@@ -3549,9 +3582,13 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ targetCommitHash, lockToken }),
       });
-        const result = await response.json() as { message?: string; webFiles?: WebFileMap; filterManifest?: ReportFilterManifest | null; report?: ReportItem; commitHash?: string | null };
+        const result = await response.json() as { message?: string; workspaceFingerprint?: string; webFiles?: WebFileMap; filterManifest?: ReportFilterManifest | null; report?: ReportItem; commitHash?: string | null };
       if (!response.ok) throw new Error(result.message || "历史版本恢复失败");
       if (result.webFiles) setWebFiles(result.webFiles);
+      workspaceFingerprintRef.current = result.workspaceFingerprint || "";
+      setWorkspaceFingerprint(workspaceFingerprintRef.current);
+      previewRefreshPendingRef.current = true;
+      setContentRefreshKey(current => current + 1);
       if (result.filterManifest !== undefined) setFilterManifest(result.filterManifest);
       if (result.report) setReport(result.report);
       setCurrentWorkingCommit(result.commitHash || null);
@@ -3562,6 +3599,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     } catch (historyError) {
       setError(historyError instanceof Error ? historyError.message : "历史版本恢复失败");
     } finally {
+      historyBusyRef.current = false;
       setHistoryBusy(false);
     }
   }
@@ -3632,6 +3670,20 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       setResourceThumbnailLoading(false);
     }
   }
+
+  useEffect(() => {
+    const action = currentSearchParams.get("studioAction");
+    if (!action || !report || !normalizedReportCode) return;
+    const actionKey = `${normalizedReportCode}:${action}`;
+    if (workBuddyActionHandledRef.current === actionKey) return;
+    if (action === "public-link") {
+      workBuddyActionHandledRef.current = actionKey;
+      setPublicLinkPanelVisible(true);
+    } else if (action === "resource" && resourceCenterEnabled) {
+      workBuddyActionHandledRef.current = actionKey;
+      void toggleResourcePanel();
+    }
+  }, [currentSearchParams, normalizedReportCode, report, resourceCenterEnabled]);
 
   async function recommendResourceCategory(assetType: ResourceAssetType, applyRecommendation: boolean, form: ResourcePublishFormState) {
     if (!normalizedReportCode) return;
@@ -3993,6 +4045,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     const images = chatImages;
     const files = chatFiles;
     if (!message && !images.length && !files.length) return;
+    setFloatingChatExpanded(true);
     if (targets.some((target) => target.workspaceFingerprint !== workspaceFingerprintRef.current)) {
       setSelectedElements([]);
       setError("选中元素已过期，请重新从当前预览选取");
@@ -4067,14 +4120,14 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
     setResizingAiPanel(false);
   }
 
-  async function copyPublicLink() {
+  async function copyPublicLink(includePassword: boolean) {
     if (!publicReportLink) {
       setError("请先启用公共链接");
       return;
     }
 
     try {
-      const copyValue = publicLinkPasswordEnabled && publicLinkPassword
+      const copyValue = includePassword && publicLinkPasswordEnabled && publicLinkPassword
         ? `${publicReportLink}\n密码: ${publicLinkPassword}`
         : publicReportLink;
       if (navigator.clipboard?.writeText) {
@@ -4448,6 +4501,19 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
   if (!report || !definition) return null;
 
+  const aiChatPanelProps = {
+    reportCode: normalizedReportCode, timeline, streaming: aiStreaming, pendingMessages, pendingQuestion, questionSubmitting, questionError, error,
+    stopping: aiStopping, chatInput, chatImages, chatFiles, selectedElements, onInputChange: setChatInput,
+    onPaste: handleAiAttachmentPaste, onPickAttachments: handleAiAttachmentPicker,
+    onRemoveImage: (id: string) => setChatImages((current) => current.filter((image) => image.id !== id)),
+    onRemoveFile: (id: string) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id)),
+    onRemoveSelectedElement: (selector: string) => setSelectedElements((current) => current.filter((element) => element.selector !== selector)),
+    onClearSelectedElements: () => setSelectedElements([]), onSubmit: submitChat, onStop: stopAiTask,
+    onSubmitQuestion: (answer: PendingQuestionAnswer) => void respondPendingQuestion(answer),
+    onCancelQuestion: () => void cancelPendingQuestion(), conversations, activeConversationId, conversationLoading,
+    onSelectConversation: (conversationId: string) => void selectConversation(conversationId), onNewConversation: startNewConversation,
+  };
+
   return (
     <div className="report-editor flex h-screen max-h-screen min-h-0 min-w-0 flex-col overflow-hidden bg-[#F4F7FB] text-[#17243A]">
       <PublicLinkPanel
@@ -4463,7 +4529,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
         expiresAt={publicLinkExpiresAt}
         onTogglePanel={() => setPublicLinkPanelVisible((current) => !current)}
         onToggleLink={() => void togglePublicLink()}
-        onCopy={() => void copyPublicLink()}
+        onCopy={includePassword => void copyPublicLink(includePassword)}
         onRotate={() => void rotatePublicLink()}
         onResetPassword={() => void resetPublicLinkPassword()}
         onTogglePasswordProtection={(nextEnabled) => void togglePublicLinkPassword(nextEnabled)}
@@ -4473,6 +4539,7 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
       <header className="flex min-h-[64px] items-center justify-between gap-4 border-b border-[#DDE5F0] bg-white px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => router.push("/reports")} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#526174] hover:bg-[#F3F6FA] hover:text-[#2167E8]" aria-label="返回报表中心" title="返回报表中心"><ArrowLeft className="h-4 w-4" /></button><div className="h-5 w-px bg-[#E7EDF5]" /><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><input value={report.name} onChange={(event) => updateReportName(event.target.value)} onBlur={autoSaveReportName} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); event.currentTarget.blur(); }} className="min-w-0 max-w-[300px] truncate border-0 bg-transparent p-0 text-[16px] font-bold text-[#17243A] outline-none focus:ring-0" aria-label="报表名称" /></div><div className="mt-1 flex items-center gap-2 text-[11px] text-[#8A98AC]"><span>{report.code}</span><span>·</span><span>{savedAt || "未保存修改"}</span></div></div></div>
         <div className="flex shrink-0 items-center gap-2">
+          <div className="max-w-[220px]">{downloadError ? <span role="alert" title={downloadError} className="block truncate text-xs text-red-600">{downloadError}</span> : <ReportDownloadFeedback state={reportDownload} />}</div>
           <span aria-live="polite" className="hidden max-w-[180px] truncate text-[11px] text-[#16845B] xl:inline">{workingStatus}</span>
           <span className={`hidden rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${report.status === "已发布" ? "bg-[#EAF8F2] text-[#16845B]" : "bg-[#FFF5E8] text-[#B76700]"}`}>{report.status}</span>
           <a href={previewReportLink} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[#DDE5F0] bg-white px-3 text-xs font-semibold text-[#526174] transition hover:border-[#2167E8] hover:text-[#2167E8]" aria-label="在新标签页预览报表" title="在新标签页预览报表"><Eye className="h-3.5 w-3.5" />预览</a>
@@ -4503,16 +4570,27 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
               />
             </div>
           ) : null}
+          <ReportDownloadMenu
+            visible={downloadMenuVisible}
+            disabled={reportDownload.busy || loading || saving || contentRefreshing || !effectiveWebFiles["page.html"]}
+            onToggle={() => { setPublicLinkPanelVisible(false); setResourcePanelVisible(false); setDownloadMenuVisible(current => !current); }}
+            onClose={() => setDownloadMenuVisible(false)}
+            onDownload={format => {
+              setDownloadMenuVisible(false);
+              setDownloadError("");
+              void reportDownload.start(webPreviewFrameRef.current, report.name, format).catch(error => setDownloadError(error instanceof Error ? error.message : "报表下载失败，请稍后重试"));
+            }}
+          />
         </div>
       </header>
 
       <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[#DDE5F0] bg-white px-4 py-1 sm:px-6">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap">
-          <button type="button" onClick={() => setAiPanelVisible((current) => !current)} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded transition ${aiPanelVisible ? "bg-[#EDF3FF] text-[#2167E8]" : "text-[#526174] hover:bg-[#F5F8FD]"}`} aria-label={aiPanelVisible ? "隐藏 AI 对话侧边栏" : "显示 AI 对话侧边栏"} aria-expanded={aiPanelVisible} title={aiPanelVisible ? "隐藏 AI 对话侧边栏" : "显示 AI 对话侧边栏"}>
+          <button type="button" onClick={() => { setAiPanelVisible((current) => !current); setFloatingChatExpanded(false); }} className={`flex h-8 w-8 shrink-0 items-center justify-center rounded transition ${aiPanelVisible ? "bg-[#EDF3FF] text-[#2167E8]" : "text-[#526174] hover:bg-[#F5F8FD]"}`} aria-label={aiPanelVisible ? "隐藏 AI 对话侧边栏" : "显示 AI 对话侧边栏"} aria-expanded={aiPanelVisible} title={aiPanelVisible ? "隐藏 AI 对话侧边栏" : "显示 AI 对话侧边栏"}>
             {aiPanelVisible ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </button>
-          <button type="button" onClick={() => void moveHistory(-1)} disabled={!canUndo || historyBusy} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="撤销上一次网页修改" title="撤销上一次网页修改"><Undo2 className="h-4 w-4" />撤销</button>
-          <button type="button" onClick={() => void moveHistory(1)} disabled={!canRedo || historyBusy} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="重做网页修改" title="重做网页修改"><Redo2 className="h-4 w-4" />重做</button>
+          <button type="button" onClick={() => void moveHistory(-1)} disabled={!canUndo || historyBusy || aiStreaming} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="撤销上一次网页修改" title="撤销上一次网页修改"><Undo2 className="h-4 w-4" />撤销</button>
+          <button type="button" onClick={() => void moveHistory(1)} disabled={!canRedo || historyBusy || aiStreaming} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded px-2 text-xs font-semibold text-[#526174] hover:bg-[#F5F8FD] disabled:cursor-not-allowed disabled:text-[#B4BFCE]" aria-label="重做网页修改" title="重做网页修改"><Redo2 className="h-4 w-4" />重做</button>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-[#71819B]">
           <button type="button" onClick={() => { setWebAutoFit(false); setZoom((current) => Math.max(minWebZoom, current - 10)); }} className="flex h-8 w-8 items-center justify-center rounded hover:bg-[#F5F8FD]" aria-label="缩小画布" title="缩小画布"><Minus className="h-4 w-4" /></button>
@@ -4530,7 +4608,12 @@ export function ReportEditorPageClient({ reportCode, sourceTenantId = null, sour
 
       <div className={`report-editor-grid relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${effectiveWebFiles["page.html"] ? "report-web-mode" : ""} ${aiPanelVisible ? "" : "ai-panel-hidden"}`} style={{ "--report-editor-ai-width": aiPanelVisible ? `${aiPanelWidth}px` : "0px", "--report-editor-properties-width": propertiesVisible ? "276px" : "0px" } as CSSProperties}>
         {publicLinkPanelVisible ? <button type="button" onPointerDown={() => setPublicLinkPanelVisible(false)} className="absolute inset-0 z-40 cursor-default border-0 bg-transparent p-0" aria-label="关闭公共链接设置" /> : null}
-        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden"><AiChatPanel reportCode={normalizedReportCode} timeline={timeline} streaming={aiStreaming} pendingMessages={pendingMessages} pendingQuestion={pendingQuestion} questionSubmitting={questionSubmitting} questionError={questionError} error={error} stopping={aiStopping} chatInput={chatInput} chatImages={chatImages} chatFiles={chatFiles} selectedElements={selectedElements} onInputChange={setChatInput} onPaste={handleAiAttachmentPaste} onPickAttachments={handleAiAttachmentPicker} onRemoveImage={(id) => setChatImages((current) => current.filter((image) => image.id !== id))} onRemoveFile={(id) => setChatFiles((current) => current.filter((attachment) => attachment.id !== id))} onRemoveSelectedElement={(selector) => setSelectedElements((current) => current.filter((element) => element.selector !== selector))} onClearSelectedElements={() => setSelectedElements([])} onSubmit={submitChat} onStop={stopAiTask} onSubmitQuestion={(answer) => void respondPendingQuestion(answer)} onCancelQuestion={() => void cancelPendingQuestion()} conversations={conversations} activeConversationId={activeConversationId} conversationLoading={conversationLoading} onSelectConversation={(conversationId) => void selectConversation(conversationId)} onNewConversation={startNewConversation} /><button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button></div>
+        <div className="group relative h-full min-h-0 min-w-0 overflow-hidden">{aiPanelVisible ? <AiChatPanel {...aiChatPanelProps} /> : null}{aiPanelVisible ? <button type="button" onPointerDown={startAiPanelResize} className="absolute right-[-4px] top-0 z-20 h-full w-2 cursor-col-resize border-0 bg-transparent p-0 hover:bg-[#2167E8]/10" aria-label="调整 AI 面板宽度" title="拖动调整 AI 面板宽度"><span className="absolute left-1/2 top-1/2 h-12 w-px -translate-x-1/2 -translate-y-1/2 bg-[#C8D5E5] opacity-0 transition group-hover:opacity-100" /></button> : null}</div>
+
+        {!aiPanelVisible ? <div className={`absolute bottom-6 z-30 flex flex-col items-end gap-2 ${floatingChatExpanded ? "h-[min(420px,calc(100%-48px))] w-[min(300px,calc(100%-32px))]" : "w-[min(300px,calc(100%-32px))]"}`} style={{ right: "calc(var(--report-editor-properties-width) + 24px)" }}>
+          {floatingChatExpanded ? <div className="min-h-0 w-full flex-1"><AiChatPanel {...aiChatPanelProps} displayMode="floating" onMinimize={() => setFloatingChatExpanded(false)} onMaximize={() => { setAiPanelVisible(true); setFloatingChatExpanded(false); }} /></div> : null}
+          <div className="w-full"><AiChatPanel {...aiChatPanelProps} displayMode="composer" onToggleConversation={() => setFloatingChatExpanded((current) => !current)} /></div>
+        </div> : null}
 
         {effectiveWebFiles["page.html"] && normalizedReportCode ? <div className="report-web-overlay z-10 overflow-hidden bg-[#E9EEF4]"><WebReportCanvas reportCode={normalizedReportCode} files={effectiveWebFiles} workspaceFingerprint={workspaceFingerprint} filters={editorFilterValues} urlFilters={editorFilterResolution.urlValues} defaults={editorFilterResolution.defaults} zoom={zoom} autoFit={webAutoFit} fitRequestKey={fitRequestKey} refreshKey={contentRefreshKey} elementPickerEnabled={elementPickerEnabled} selectedElementSelectors={selectedElementSelectors} onElementPickerChange={setElementPickerEnabled} onElementSelected={handleElementSelected} onLoad={() => { previewRefreshPendingRef.current = false; setContentRefreshing(false); }} onZoomChange={handleCanvasZoomChange} onAutoFitZoomChange={handleAutoFitZoomChange} onFrameReady={(frame) => { webPreviewFrameRef.current = frame; if (frame) previewRefreshPendingRef.current = false; }} onFocusControllerChange={handleCanvasFocusControllerChange} /></div> : null}
 

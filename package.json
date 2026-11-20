@@ -10,6 +10,7 @@
     "build": "bash scripts/run-next.sh build",
     "start": "bash scripts/run-next.sh start",
     "typecheck": "tsc --noEmit",
+    "test:studio-api": "tsx scripts/verify-studio-open-api.ts",
     "test:report-filters": "tsx scripts/verify-report-filters.ts",
     "test:ai-artifacts": "tsx scripts/verify-report-ai-artifacts.ts",
     "test:report-editor-intent": "tsx scripts/verify-report-editor-intent.ts",
@@ -18,7 +19,21 @@
     "db:init-members": "node scripts/init-members.cjs",
     "db:init-data-sources": "node scripts/init-data-sources.cjs",
     "db:init-metric-knowledge": "node scripts/init-metric-knowledge.cjs",
-    "db:init-reports": "node scripts/init-reports.cjs"
+    "db:init-reports": "node scripts/init-reports.cjs",
+    "test:studio-oauth": "tsx scripts/verify-studio-oauth.ts",
+    "test:workbuddy-binding": "tsx scripts/verify-workbuddy-binding.ts",
+    "test:studio-login-return": "tsx scripts/verify-studio-login-return.ts",
+    "test:workbuddy-login": "tsx scripts/verify-workbuddy-login.ts",
+    "test:metric-retrieval": "tsx scripts/verify-metric-retrieval.ts",
+    "test:metric-http": "tsx scripts/verify-metric-http.ts",
+    "test:metric-mysql": "tsx scripts/verify-metric-mysql.ts",
+    "db:migrate-metric-governance": "tsx scripts/migrate-metric-governance.ts",
+    "db:migrate-conversation-quota": "tsx scripts/migrate-conversation-quota.ts",
+    "metrics:reindex": "tsx scripts/rebuild-metric-index.ts",
+    "test:metric-migration": "tsx scripts/verify-metric-migration.ts",
+    "db:reset-metric-content": "tsx scripts/reset-metric-content.ts",
+    "test:metric-content": "tsx scripts/verify-metric-content.ts",
+    "test:metric-real-embedding": "tsx scripts/verify-metric-real-embedding.ts"
   },
   "dependencies": {
     "@alicloud/dysmsapi20170525": "^4.6.0",
@@ -27,8 +42,10 @@
     "@duckdb/node-api": "^1.5.5-r.4",
     "@elastic/elasticsearch": "^9.5.0",
     "@google-cloud/bigquery": "^9.0.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/pg": "^8.21.0",
     "html2canvas": "1.4.1",
+    "jspdf": "4.2.1",
     "lucide-react": "^0.511.0",
     "mongodb": "^7.5.0",
     "mssql": "^12.7.0",
@@ -43,7 +60,8 @@
     "snowflake-sdk": "^3.2.0",
     "ws": "^8.18.0",
     "xlsx": "0.18.5",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/mssql": "^12.3.0",

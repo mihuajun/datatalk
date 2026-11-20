@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+async function main() {
+ const root=mkdtempSync(path.join(tmpdir(),"datatalk-image-key-"));
+ process.env.WORKSPACE_STORAGE_ROOT=root;
+ const {saveAgentModelConfig,getAgentModelConfig,updateScopedModelConfig}=await import("../lib/server/agent-runtime");
+ const {generateDataTalkImage}=await import("../lib/server/datatalk-image-gen-service");
+ let imageSuccess=false;
+ let rejectStandardChatTokenLimit=false;
+ const chatTokenParameters:string[]=[];
+ const chatTemperatures:Array<unknown>=[];
+ const imageKeys:string[]=[];const chatKeys:string[]=[];
+ let imageServiceRequests=0;
+ const server=createServer(async(req,res)=>{
+  let rawBody="";for await(const chunk of req) rawBody+=chunk;
+  res.setHeader("content-type","application/json");
+  if(req.url?.endsWith("/images/generations")){imageKeys.push(req.headers.authorization||"");if(imageSuccess)res.end('{"data":[{"b64_json":"fixture"}]}');else {res.writeHead(503);res.end('{}');}}
+  else {chatKeys.push(req.headers.authorization||"");const body=JSON.parse(rawBody||"{}") as Record<string,unknown>;chatTokenParameters.push("max_completion_tokens" in body?"max_completion_tokens":"max_tokens" );chatTemperatures.push(body.temperature);if(rejectStandardChatTokenLimit&&"max_completion_tokens" in body){res.writeHead(400);res.end(JSON.stringify({error:{message:"Unsupported parameter: 'max_completion_tokens' is not supported by this private proxy. Use 'max_tokens' instead.",type:"invalid_request_error",param:"max_completion_tokens",code:"unsupported_parameter"}}));}else res.end('{"choices":[]}');}
+ });
+ await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+ const imageServer=createServer((req,res)=>{imageServiceRequests++;server.emit("request",req,res);});
+ await new Promise<void>(resolve=>imageServer.listen(0,"127.0.0.1",resolve));
+ try {
+  const imageBaseUrl=`http://127.0.0.1:${(imageServer.address() as {port:number}).port}/v1`;
+  const baseUrl=`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`;
+  const config={baseUrl,apiKey:"chat-test-secret",model:"chat-fixture",imageModel:"image-fixture",imageApiKey:"image-test-secret"};
+  await saveAgentModelConfig(config);
+  const image=()=>generateDataTalkImage({userId:999,args:{prompt:"测试报表插图"}});
+  await assert.rejects(image);
+  assert.equal(imageKeys.at(-1),"Bearer image-test-secret");
+  assert.ok(!JSON.stringify(getAgentModelConfig()).includes("test-secret"));
+  await saveAgentModelConfig({...config,apiKey:"",imageApiKey:""});
+  await assert.rejects(image);assert.equal(imageKeys.at(-1),"Bearer image-test-secret");
+  await saveAgentModelConfig({...config,imageApiKey:"",clearImageApiKey:true});
+  await assert.rejects(image);assert.equal(imageKeys.at(-1),"Bearer chat-test-secret");
+  assert.ok(chatKeys.every(key=>key==="Bearer chat-test-secret"));
+  const file=path.join(root,"runtime/agent-runtime/model.json");
+  assert.equal(statSync(file).mode & 0o777,0o600);
+  assert.ok(!readFileSync(file,"utf8").includes("image-test-secret"));
+  const calls=chatKeys.length+imageKeys.length;
+  await updateScopedModelConfig("image","save",{imageModel:"independent-image",imageApiKey:"independent-secret",model:"must-not-save"});
+  assert.equal(chatKeys.length+imageKeys.length,calls,"Saving calls no provider");
+  assert.equal(getAgentModelConfig()?.model,"chat-fixture");
+  const before=readFileSync(file,"utf8");imageSuccess=true;
+  await updateScopedModelConfig("image","test",{imageModel:"temporary-test",imageApiKey:"temporary-key"});
+  assert.equal(imageKeys.at(-1),"Bearer temporary-key");
+  assert.equal(readFileSync(file,"utf8"),before,"Image test never saves");
+  await updateScopedModelConfig("chat","test",{baseUrl,model:"temporary-chat",apiKey:"chat-test-secret"});
+  assert.equal(readFileSync(file,"utf8"),before,"Chat test never saves");
+  rejectStandardChatTokenLimit=true;
+  await updateScopedModelConfig("chat","test",{baseUrl,model:"official-openai-style",apiKey:"chat-test-secret"});
+  assert.deepEqual(chatTokenParameters.slice(-2),["max_completion_tokens","max_tokens"],"the standard OpenAI protocol is tried first; private proxies fall back to max_tokens only when needed");
+  assert.deepEqual(chatTemperatures.slice(-2),[undefined,undefined],"current OpenAI models that only permit the default temperature receive no temperature override");
+  rejectStandardChatTokenLimit=false;
+  await updateScopedModelConfig("chat","save",{baseUrl,model:"changed-chat",apiKey:"chat-test-secret",imageModel:"must-not-save"});
+  assert.equal(getAgentModelConfig()?.imageModel,"independent-image");
+  assert.equal(getAgentModelConfig()?.model,"changed-chat");
+  await assert.rejects(()=>updateScopedModelConfig("image","save",{imageBaseUrl,imageModel:"image-fixture"}),/API Key/);
+  await updateScopedModelConfig("image","save",{imageBaseUrl,imageModel:"image-fixture",imageApiKey:"separate-service-key"});
+  imageSuccess=false;
+  await assert.rejects(image);
+  assert.equal(imageServiceRequests,1,"Generation reaches independent image service");
+  assert.equal(imageKeys.at(-1),"Bearer separate-service-key");
+  imageSuccess=true;
+  await updateScopedModelConfig("image","test",{imageBaseUrl,imageModel:"image-fixture"});
+  assert.equal(imageServiceRequests,2,"Connection test reaches independent image service");
+  await updateScopedModelConfig("chat","save",{baseUrl,model:"next-chat",apiKey:"next-chat-key"});
+  assert.equal(getAgentModelConfig()?.imageBaseUrl,imageBaseUrl);
+  await updateScopedModelConfig("image","save",{imageBaseUrl,imageModel:"image-fixture",imageEnabled:false});
+  const disabledRequests=imageServiceRequests;
+  await assert.rejects(image,/IMAGE_MODEL_DISABLED/);
+  assert.equal(imageServiceRequests,disabledRequests,"Disabled generation makes no requests");
+  console.log("Scoped test/save isolation, image endpoint and disabled switch passed");
+  console.log(JSON.stringify({ok:true,checks:["image requests use independent key","chat validation keeps chat key","blank preserves key","explicit clear restores fallback","read API masks secrets","config file permissions 0600"]}));
+ } finally {await new Promise<void>(resolve=>imageServer.close(()=>resolve()));await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(root,{recursive:true,force:true});}
+}
+main().catch(error=>{console.error(error);process.exitCode=1;});

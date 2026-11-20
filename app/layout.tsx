@@ -6,8 +6,8 @@ import { ConsoleShell } from "@/components/layout/console-shell";
 import { getAuthSession } from "@/lib/server/auth-session";
 
 export const metadata: Metadata = {
-  title: "DataTalk",
-  description: "用对话完成报表开发",
+  title: "DataTalk Studio",
+  description: "AI 原生的数据分析与报表开发工作台",
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

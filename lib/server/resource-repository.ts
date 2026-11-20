@@ -2,6 +2,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import type { ResourceAssetType, ResourceCategoryOption, ResourceItemRecord, ResourceItemStatus } from "@/lib/resource-center-types";
 import { getDbPool, withDatabaseReadRetry } from "@/lib/server/mysql";
+import { getWebAppUrl } from "@/lib/server/site-config";
+import { readAppConfig, readOptionalStringConfigValue } from "@/lib/server/app-config";
 
 type ResourceCategoryRow = RowDataPacket & {
   id: number;
@@ -45,6 +47,133 @@ type PublishedResourceTargetRow = RowDataPacket & {
   source_code: string;
   source_version: number;
 };
+
+export type PublishedResourceSummary = {
+  id: number;
+  assetType: "report" | "template";
+  sourceCode: string;
+  title: string;
+  summary: string | null;
+  description: string | null;
+  remark: string | null;
+  category: string;
+  publisher: string;
+  version: number;
+  thumbnailUrl: string | null;
+  detailUrl: string;
+  previewUrl: string | null;
+  publishedAt: string | null;
+  views: number;
+  favorites: number;
+  likes: number;
+};
+
+type PublicResourceSummaryRow = RowDataPacket & {
+  id: number;
+  tenant_id: number;
+  asset_type: string;
+  source_code: string;
+  source_version: number;
+  title: string | null;
+  summary: string | null;
+  release_description: string | null;
+  release_remark: string | null;
+  category_name: string | null;
+  parent_category_name: string | null;
+  tenant_name: string | null;
+  publisher_tenant_name: string | null;
+  owner_name: string | null;
+  report_name: string | null;
+  thumbnail_url: string | null;
+  published_at: string | Date | null;
+  view_count: number | null;
+  favorite_count: number | null;
+  like_count: number | null;
+};
+
+const PUBLIC_RESOURCE_SELECT = `SELECT ri.id, ri.tenant_id, ri.asset_type, ri.source_code, ri.source_version,
+       ri.title, ri.summary, ri.thumbnail_url, ri.published_at,
+       ri.view_count, ri.favorite_count, ri.like_count,
+       rr.description AS release_description, rr.remark AS release_remark,
+       rr.publisher_tenant_name, r.name AS report_name, r.owner_name,
+       t.name AS tenant_name, rc.name AS category_name, parent_rc.name AS parent_category_name
+  FROM resource_item ri
+  INNER JOIN tenant_report r
+          ON r.tenant_id = ri.tenant_id AND r.code = ri.source_code AND r.deleted_at IS NULL
+  INNER JOIN report_release rr
+          ON rr.tenant_id = ri.tenant_id AND rr.report_code = ri.source_code
+         AND rr.version = ri.source_version AND rr.status = 'published'
+  LEFT JOIN tenant t ON t.id = ri.tenant_id
+  LEFT JOIN resource_category rc
+         ON rc.id = ri.category_id AND rc.asset_type = ri.asset_type AND rc.enabled = 1
+  LEFT JOIN resource_category parent_rc
+         ON parent_rc.id = rc.parent_id AND parent_rc.asset_type = rc.asset_type AND parent_rc.enabled = 1`;
+
+function normalizePublishedResource(row: PublicResourceSummaryRow): PublishedResourceSummary {
+  const assetType = row.asset_type === "template" ? "template" : "report";
+  const category = [optionalText(row.parent_category_name), optionalText(row.category_name)].filter(Boolean).join(" / ") || "未分类";
+  const code = encodeURIComponent(row.source_code);
+  const detailOrigin = new URL(getWebAppUrl()).origin;
+  const configuredStudioOrigin = process.env.STUDIO_PUBLIC_URL?.trim()
+    || readOptionalStringConfigValue(readAppConfig()?.site?.studioPublicUrl);
+  let previewOrigin: string | null = null;
+  try { if (configuredStudioOrigin) previewOrigin = new URL(configuredStudioOrigin).origin; } catch { /* expose no unusable preview URL */ }
+  return {
+    id: Number(row.id), assetType, sourceCode: row.source_code,
+    title: optionalText(row.title) || optionalText(row.report_name) || row.source_code,
+    summary: optionalText(row.summary), description: optionalText(row.release_description),
+    remark: optionalText(row.release_remark), category,
+    publisher: optionalText(row.tenant_name) || optionalText(row.publisher_tenant_name) || optionalText(row.owner_name) || "DataTalk",
+    version: Number(row.source_version), thumbnailUrl: optionalText(row.thumbnail_url),
+    detailUrl: `${detailOrigin}/${assetType === "template" ? "templates" : "reports"}/${code}`,
+    previewUrl: previewOrigin ? `${previewOrigin}/share/${code}` : null,
+    publishedAt: normalizeDate(row.published_at), views: Number(row.view_count || 0),
+    favorites: Number(row.favorite_count || 0), likes: Number(row.like_count || 0),
+  };
+}
+
+export async function listPublishedPublicResources(input: {
+  assetType?: Extract<ResourceAssetType, "report" | "template">;
+  query?: string;
+  category?: string;
+  page?: number;
+  pageSize?: number;
+  sort?: "latest" | "popular";
+}) {
+  const page = Math.max(1, Math.floor(input.page || 1));
+  const pageSize = Math.min(50, Math.max(1, Math.floor(input.pageSize || 20)));
+  const clauses = ["ri.status = 'published'", "ri.asset_type IN ('report', 'template')"];
+  const values: Array<string | number> = [];
+  if (input.assetType) { clauses.push("ri.asset_type = ?"); values.push(input.assetType); }
+  if (input.category?.trim()) { clauses.push("(rc.name = ? OR parent_rc.name = ?)"); values.push(input.category.trim(), input.category.trim()); }
+  if (input.query?.trim()) {
+    const pattern = `%${input.query.trim().replace(/[!%_]/g, (value) => `!${value}`).toLowerCase()}%`;
+    clauses.push("(LOWER(ri.title) LIKE ? ESCAPE '!' OR LOWER(COALESCE(ri.summary, '')) LIKE ? ESCAPE '!' OR LOWER(COALESCE(rr.description, '')) LIKE ? ESCAPE '!' OR LOWER(r.name) LIKE ? ESCAPE '!' OR LOWER(ri.source_code) LIKE ? ESCAPE '!')");
+    values.push(pattern, pattern, pattern, pattern, pattern);
+  }
+  const where = ` WHERE ${clauses.join(" AND ")}`;
+  const [countRows] = await withDatabaseReadRetry(() => getDbPool().query<Array<RowDataPacket & { total: number }>>(
+    `SELECT COUNT(*) AS total ${PUBLIC_RESOURCE_SELECT.slice(PUBLIC_RESOURCE_SELECT.indexOf("FROM resource_item ri"))}${where}`,
+    values,
+  ));
+  const order = input.sort === "popular"
+    ? "ORDER BY COALESCE(ri.view_count, 0) DESC, COALESCE(ri.published_at, ri.updated_at) DESC, ri.id DESC"
+    : "ORDER BY COALESCE(ri.published_at, ri.updated_at) DESC, ri.id DESC";
+  const [rows] = await withDatabaseReadRetry(() => getDbPool().query<PublicResourceSummaryRow[]>(
+    `${PUBLIC_RESOURCE_SELECT}${where} ${order} LIMIT ? OFFSET ?`,
+    [...values, pageSize, (page - 1) * pageSize],
+  ));
+  const total = Number(countRows[0]?.total || 0);
+  return { items: rows.map(normalizePublishedResource), total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+}
+
+export async function getPublishedPublicResourceById(id: number) {
+  const [rows] = await withDatabaseReadRetry(() => getDbPool().query<PublicResourceSummaryRow[]>(
+    `${PUBLIC_RESOURCE_SELECT} WHERE ri.id = ? AND ri.status = 'published' AND ri.asset_type IN ('report', 'template') LIMIT 1`,
+    [id],
+  ));
+  return rows[0] ? { ...normalizePublishedResource(rows[0]), sourceTenantId: Number(rows[0].tenant_id) } : null;
+}
 
 function normalizeDate(value: string | Date | null | undefined) {
   if (!value) return null;

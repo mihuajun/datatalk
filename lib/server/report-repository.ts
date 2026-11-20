@@ -1,3 +1,4 @@
+import { readWebFiles } from "@/lib/server/report-web-assets";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
@@ -416,61 +417,6 @@ export type ReportWorkspaceSnapshot = {
   fingerprint: string;
 };
 
-const WEB_IMAGE_MEDIA_TYPES: Record<string, string> = {
-  avif: "image/avif",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  png: "image/png",
-  svg: "image/svg+xml",
-  webp: "image/webp",
-};
-const MAX_INLINE_WEB_ASSET_BYTES = 5 * 1024 * 1024;
-const MAX_INLINE_WEB_ASSETS_TOTAL_BYTES = 30 * 1024 * 1024;
-const MAX_INLINE_WEB_ASSETS = 30;
-
-function referencedWebImagePaths(files: WebFileMap) {
-  const source = `${files["page.html"] || ""}\n${files["styles.css"] || ""}`;
-  const matches = source.matchAll(/(?:\.\/)?(assets\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:avif|gif|jpe?g|png|svg|webp))/gi);
-  return [...new Set(Array.from(matches, (match) => match[1]))]
-    .filter((relativePath) => !relativePath.split("/").some((segment) => segment === "." || segment === ".."))
-    .slice(0, MAX_INLINE_WEB_ASSETS);
-}
-
-async function readReferencedWebImageAssets(root: string, files: WebFileMap) {
-  const assets: Record<string, string> = {};
-  let totalBytes = 0;
-  const realRoot = await fs.realpath(root).catch(() => path.resolve(root));
-  for (const relativePath of referencedWebImagePaths(files)) {
-    const extension = relativePath.split(".").at(-1)?.toLowerCase() || "";
-    const mediaType = WEB_IMAGE_MEDIA_TYPES[extension];
-    if (!mediaType) continue;
-    const absolutePath = path.resolve(root, relativePath);
-    if (!absolutePath.startsWith(`${path.resolve(root)}${path.sep}`)) continue;
-    try {
-      const realAssetPath = await fs.realpath(absolutePath);
-      if (!realAssetPath.startsWith(`${realRoot}${path.sep}`)) continue;
-      const stat = await fs.stat(realAssetPath);
-      if (!stat.isFile() || stat.size > MAX_INLINE_WEB_ASSET_BYTES || totalBytes + stat.size > MAX_INLINE_WEB_ASSETS_TOTAL_BYTES) continue;
-      const content = await fs.readFile(realAssetPath);
-      totalBytes += content.byteLength;
-      assets[relativePath] = `data:${mediaType};base64,${content.toString("base64")}`;
-    } catch {
-      // A missing or unreadable referenced asset remains visible to the preview as a broken image.
-    }
-  }
-  return assets;
-}
-
-async function readWebFiles(root: string) {
-  const webFiles: WebFileMap = {};
-  for (const name of ["page.html", "styles.css", "app.js"] as const) {
-    try { webFiles[name] = await fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ root, name), "utf8"); } catch { /* optional workspace file */ }
-  }
-  const assets = await readReferencedWebImageAssets(root, webFiles);
-  if (Object.keys(assets).length) webFiles.assets = assets;
-  return webFiles;
-}
 
 async function findLatestWorkspaceMtime(root: string, relativeDirectory = ""): Promise<bigint> {
   let entries;
@@ -650,11 +596,12 @@ async function createPublicLink(connection: PoolConnection, input: {
   reportCode: string;
   userId: number;
   passwordEnabled?: boolean;
+  password?: string;
   expiresAt?: Date | null;
 }) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const shortCode = generatePublicLinkCode();
-    const password = generatePublicLinkPassword();
+    const password = input.password ?? generatePublicLinkPassword();
     try {
       await connection.execute(
         `INSERT INTO report_public_link
@@ -712,6 +659,7 @@ export async function updateReportPublicLink(input: {
   enabled: boolean;
   rotate?: boolean;
   passwordEnabled?: boolean;
+  password?: string;
   resetPassword?: boolean;
   expiresAt?: Date | null;
 }) {
@@ -739,13 +687,13 @@ export async function updateReportPublicLink(input: {
     if (input.enabled) {
       const currentLink = await getCurrentPublicLinkRow(connection, input.tenantId, input.reportCode);
       if (currentLink && !input.rotate) {
-        const password = input.resetPassword || !currentLink.password ? generatePublicLinkPassword() : currentLink.password;
+        const password = input.password ?? (input.resetPassword || !currentLink.password ? generatePublicLinkPassword() : currentLink.password);
         const passwordEnabled = input.passwordEnabled ?? Number(currentLink.password_enabled) === 1;
         const expiresAt = input.expiresAt === undefined
           ? (currentLink.expires_at ? new Date(currentLink.expires_at) : null)
           : input.expiresAt;
 
-        if (input.resetPassword || !currentLink.password || input.passwordEnabled !== undefined || input.expiresAt !== undefined) {
+        if (input.password !== undefined || input.resetPassword || !currentLink.password || input.passwordEnabled !== undefined || input.expiresAt !== undefined) {
           await connection.execute(
             `UPDATE report_public_link
                 SET password_enabled = ?, password = ?, expires_at = ?
@@ -771,6 +719,7 @@ export async function updateReportPublicLink(input: {
           reportCode: input.reportCode,
           userId: input.userId,
           passwordEnabled: input.passwordEnabled ?? (currentLink ? Number(currentLink.password_enabled) === 1 : false),
+          password: input.password,
           expiresAt: input.expiresAt === undefined
             ? (currentLink?.expires_at ? new Date(currentLink.expires_at) : null)
             : input.expiresAt,

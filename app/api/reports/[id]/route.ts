@@ -1,3 +1,4 @@
+import { readReportEditHistory } from "@/lib/server/report-workspace-service";
 import { NextResponse } from "next/server";
 
 import { type ResourceAssetType, type ResourceCategoryOption, type ResourceItemRecord } from "@/lib/resource-center-types";
@@ -47,6 +48,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     }
     return NextResponse.json({
       ...result,
+      editHistory: await readReportEditHistory(session.tenantId, reportCode, result.workingCommitHash),
       publicLinkCode: publicLink?.publicLinkCode || null,
       publicLinkPassword: publicLink?.publicLinkPassword || null,
       publicLinkPasswordEnabled: publicLink?.publicLinkPasswordEnabled ?? false,

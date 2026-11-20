@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
 import { readAppConfig, readOptionalStringConfigValue } from "@/lib/server/app-config";
 import { getDbPool } from "@/lib/server/mysql";
+import { grantSignupConversationQuota } from "@/lib/server/conversation-quota";
 
 type GoogleProfile = { sub: string; name?: string; email?: string; email_verified?: boolean };
 type GoogleConfig = { clientId: string; clientSecret: string };
@@ -76,6 +77,7 @@ export async function findOrCreateGoogleUser(request: Request, code: string): Pr
         const tenantId = Number((tenantResult as { insertId: number }).insertId);
         const [userResult] = await connection.execute("INSERT INTO tenant_user (tenant_id, name, username, phone, email, role, password, salt, status, last_active) VALUES (?, ?, ?, NULL, ?, 'developer', '', NULL, 1, CURRENT_TIMESTAMP)", [tenantId, profile.name, username, profile.email]);
         userId = Number((userResult as { insertId: number }).insertId);
+        await grantSignupConversationQuota(connection, tenantId);
       }
       await connection.execute("INSERT INTO user_identity (user_id, provider, provider_key, provider_email, verified_at) VALUES (?, 'google', ?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), provider_email = VALUES(provider_email), verified_at = CURRENT_TIMESTAMP", [userId, profile.providerKey, profile.email]);
       await connection.execute("UPDATE tenant_user SET last_active = CURRENT_TIMESTAMP WHERE id = ?", [userId]);

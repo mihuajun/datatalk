@@ -11,7 +11,7 @@ import {
   previewReportAgentSql,
   readReportAgentReferenceReport,
 } from "@/lib/server/report-agent-tools";
-import { listMetricKnowledge, proposeMetricKnowledge, recordMetricFeedback, searchMetricKnowledge } from "@/lib/server/report-metric-knowledge-service";
+import { readReportMetricBindings, listMetricKnowledge, proposeMetricKnowledge, recordMetricFeedback, searchMetricKnowledge } from "@/lib/server/report-metric-knowledge-service";
 import { normalizeReportQueryError } from "@/lib/server/report-query-gateway";
 import { getReportDetailByCode } from "@/lib/server/report-repository";
 
@@ -21,6 +21,7 @@ type ToolName =
   | "preview_sql"
   | "list_reference_reports"
   | "read_reference_report"
+  | "read_report_metric_bindings"
   | "list_metric_knowledge"
   | "search_metric_knowledge"
   | "propose_metric_knowledge"
@@ -32,7 +33,7 @@ function toolScope(tool: ToolName): ReportAgentToolScope {
   if (tool === "get_data_source_schema") return "schema:read";
   if (tool === "preview_sql") return "sql:preview";
   if (tool === "list_reference_reports" || tool === "read_reference_report") return "report:read";
-  if (tool === "search_metric_knowledge" || tool === "list_metric_knowledge") return "metric:read";
+  if (tool === "read_report_metric_bindings" || tool === "search_metric_knowledge" || tool === "list_metric_knowledge") return "metric:read";
   if (tool === "propose_metric_knowledge") return "metric:propose";
   if (tool === "record_metric_feedback") return "metric:feedback";
   if (tool === "inspect_report_preview") return "preview:inspect";
@@ -53,11 +54,13 @@ function errorStatus(code: string) {
   ) {
     return 401;
   }
+  if (code === "METRIC_SQL_VALIDATION_FAILED") return 422;
+  if (code === "METRIC_NOT_ACTIVE" || code === "METRIC_VERSION_CONFLICT" || code === "METRIC_BASE_VERSION_REQUIRED") return 409;
   if (code === "REPORT_AGENT_TOOL_FORBIDDEN") return 403;
   if (code === "REPORT_PREVIEW_INSPECTION_FORBIDDEN") return 403;
   if (code === "REPORT_PREVIEW_INSPECTION_NOT_PENDING") return 409;
   if (code === "REPORT_PREVIEW_CLIENT_UNAVAILABLE" || code === "REPORT_PREVIEW_INSPECTION_TIMEOUT") return 503;
-  if (code === "IMAGE_MODEL_NOT_CONFIGURED") return 409;
+  if (code === "IMAGE_MODEL_NOT_CONFIGURED" || code === "IMAGE_MODEL_DISABLED") return 409;
   if (code === "IMAGE_GENERATION_RATE_LIMITED") return 429;
   if (code === "IMAGE_GENERATION_BUSY") return 503;
   if (code === "IMAGE_GENERATION_TIMEOUT") return 504;
@@ -90,6 +93,11 @@ function errorStatus(code: string) {
     code === "REST_REQUEST_INVALID" ||
     code === "REST_REQUEST_FAILED" ||
     code === "REST_RESPONSE_INVALID" ||
+    code === "METRIC_CONTENT_REQUIRED" ||
+    code === "METRIC_CONTENT_TOO_LARGE" ||
+    code === "METRIC_NAME_INVALID" ||
+    code === "METRIC_KEYWORDS_INVALID" ||
+    code === "METRIC_DEFINITION_TOO_LARGE" ||
     code === "METRIC_QUERY_REQUIRED" ||
     code === "METRIC_NAME_REQUIRED" ||
     code === "METRIC_DEFINITION_REQUIRED" ||
@@ -118,6 +126,7 @@ export async function POST(request: Request) {
     && tool !== "preview_sql"
     && tool !== "list_reference_reports"
     && tool !== "read_reference_report"
+    && tool !== "read_report_metric_bindings"
     && tool !== "list_metric_knowledge"
     && tool !== "search_metric_knowledge"
     && tool !== "propose_metric_knowledge"
@@ -211,6 +220,9 @@ export async function POST(request: Request) {
       });
     }
 
+    if (tool === "read_report_metric_bindings") {
+      return NextResponse.json({ ok: true, result: await readReportMetricBindings(binding.tenantId,binding.reportCode) });
+    }
     if (tool === "list_metric_knowledge") {
       return NextResponse.json({
         ok: true,
@@ -228,6 +240,8 @@ export async function POST(request: Request) {
           query: typeof body.args?.query === "string" ? body.args.query : "",
           formulaHint: typeof body.args?.formulaHint === "string" ? body.args.formulaHint : undefined,
           timeFieldHint: typeof body.args?.timeFieldHint === "string" ? body.args.timeFieldHint : undefined,
+          grainHint: typeof body.args?.grainHint === "string" ? body.args.grainHint : undefined,
+          dimensions: body.args?.dimensions,
           filters: body.args?.filters,
           dedupRule: typeof body.args?.dedupRule === "string" ? body.args.dedupRule : undefined,
           dataSource: typeof body.args?.dataSource === "string" ? body.args.dataSource : undefined,
@@ -237,6 +251,12 @@ export async function POST(request: Request) {
     }
 
     if (tool === "propose_metric_knowledge") {
+      // Validation belongs to this candidate, not any earlier query in the session.
+      const validationSql = typeof body.args?.validationSql === "string" ? body.args.validationSql : "";
+      if (validationSql) try { await previewReportAgentSql({ tenantId: binding.tenantId,
+        dataSourceRef: typeof body.args?.dataSource === "string" ? body.args.dataSource : "",
+        sql: validationSql, params: body.args?.validationParams, maxRows: 5 }); }
+      catch { throw new Error("METRIC_SQL_VALIDATION_FAILED"); }
       return NextResponse.json({
         ok: true,
         result: await proposeMetricKnowledge({
@@ -245,18 +265,13 @@ export async function POST(request: Request) {
           conversationId: binding.conversationId,
           dshSessionId: binding.dshSessionId,
           userId: binding.userId,
-          sqlPreviewValidated: binding.sqlPreviewSuccessCount > 0,
+          sqlPreviewValidated: Boolean(validationSql),
           metricKey: body.args?.metricKey,
           name: body.args?.name,
           aliases: body.args?.aliases,
-          definition: body.args?.definition,
-          formula: body.args?.formula,
-          grain: body.args?.grain,
-          timeField: body.args?.timeField,
-          filters: body.args?.filters,
-          dedupRule: body.args?.dedupRule,
-          dataSource: body.args?.dataSource,
-          sourceRef: body.args?.sourceRef,
+          content: body.args?.content,
+          keywords: body.args?.keywords,
+          baseVersion: body.args?.baseVersion,
           confirmed: body.args?.confirmed,
         }),
       });

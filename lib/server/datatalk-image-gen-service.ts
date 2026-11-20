@@ -61,7 +61,7 @@ export function normalizeDataTalkImageGenerationInput(input: DataTalkImageGenera
   if (!prompt) throw new Error("IMAGE_PROMPT_REQUIRED");
   if (prompt.length > MAX_PROMPT_LENGTH) throw new Error("IMAGE_PROMPT_TOO_LONG");
 
-  const outputFormat = requiredEnum(input.outputFormat, DATATALK_IMAGE_OUTPUT_FORMATS, "webp");
+  const outputFormat = requiredEnum(input.outputFormat, DATATALK_IMAGE_OUTPUT_FORMATS, "png");
   const background = requiredEnum(input.background, DATATALK_IMAGE_BACKGROUNDS, "auto");
   if (background === "transparent" && outputFormat === "jpeg") {
     throw new Error("IMAGE_GENERATION_INVALID_PARAMS");
@@ -171,16 +171,17 @@ export async function generateDataTalkImage(input: {
 }): Promise<DataTalkGeneratedImage> {
   const request = normalizeDataTalkImageGenerationInput(input.args);
   const config = getConfiguredAgentModelCredentials();
+  if (config?.imageEnabled === false) throw new Error("IMAGE_MODEL_DISABLED");
   if (!config?.imageModel) throw new Error("IMAGE_MODEL_NOT_CONFIGURED");
 
   const finishGeneration = beginGeneration(input.userId);
   const requestSignal = createRequestSignal(input.signal);
   try {
-    const response = await fetch(`${config.baseUrl}/images/generations`, {
+    const response = await fetch(`${config.imageBaseUrl || config.baseUrl}/images/generations`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${config.imageApiKey || config.apiKey}`,
       },
       body: JSON.stringify({
         model: config.imageModel,

@@ -87,7 +87,7 @@ export function apply(ctx) {
       size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "输出尺寸，默认 1024x1024。" },
       quality: { type: "string", enum: ["low", "medium", "high"], description: "生成质量，默认 medium。" },
       background: { type: "string", enum: ["auto", "opaque", "transparent"], description: "背景模式，默认 auto；透明背景需配合 PNG 或 WebP。" },
-      outputFormat: { type: "string", enum: ["png", "webp", "jpeg"], description: "输出格式，默认 webp。" },
+      outputFormat: { type: "string", enum: ["png", "webp", "jpeg"], description: "输出格式，默认 png。" },
       saveMode: { type: "string", enum: ["report_asset", "conversation_only"], description: "report_asset 保存到当前报表并返回附件；conversation_only 仅返回对话附件。默认 report_asset。" },
     },
     async execute(args, exec) {

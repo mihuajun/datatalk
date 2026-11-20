@@ -7,6 +7,8 @@
 site:
   # The only external origin accepted as a post-login return target.
   webAppUrl: "${WEB_APP_URL:http://localhost:3001}"
+  # Canonical Studio HTTPS origin for MCP OAuth, without a path.
+  studioPublicUrl: "${STUDIO_PUBLIC_URL:}"
 
 # AUTH_SESSION_SECRET must be identical in datatalk-studio and datatalk-web.
 # Set AUTH_COOKIE_DOMAIN to the shared parent domain when the apps use different subdomains.
@@ -25,6 +27,14 @@ resourceCenter:
 auth:
   # When false, only username/password login remains available.
   allowRegistration: "${ALLOW_REGISTRATION:true}"
+  # Studio -> WorkBuddy account binding (separate from Studio MCP authorization).
+  # Set these environment variables in production; do not commit real credentials.
+  # Production requires site.studioPublicUrl or STUDIO_PUBLIC_URL as the Studio HTTPS origin without a path.
+  # Register <Studio origin>/api/integrations/workbuddy/callback in the WorkBuddy app.
+  workbuddy:
+    # Login is available only when registration is enabled and app credentials are configured.
+    clientId: "${WORKBUDDY_CLIENT_ID:}"
+    clientSecret: "${WORKBUDDY_CLIENT_SECRET:}"
   github:
     clientId: "${GITHUB_CLIENT_ID}"
     clientSecret: "${GITHUB_CLIENT_SECRET}"

@@ -14,8 +14,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ cod
 
   const body = await request.json().catch(() => null) as { password?: unknown } | null;
   const password = typeof body?.password === "string" ? body.password.trim() : "";
-  if (!/^\d{4}$/.test(password)) {
-    return NextResponse.json({ message: "请输入 4 位数字密码" }, { status: 400 });
+  const passwordLength = [...password].length;
+  if (passwordLength < 4 || passwordLength > 20) {
+    return NextResponse.json({ message: "请输入 4 至 20 个字符的密码" }, { status: 400 });
   }
 
   const link = await getPublicLinkVerificationData(shortCode);

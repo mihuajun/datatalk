@@ -196,9 +196,14 @@ export type AgentModelConfig = {
   apiKey: string;
   model: string;
   imageModel?: string;
+  imageEnabled?: boolean;
+  imageBaseUrl?: string;
+  imageApiKey?: string;
 };
 
-export type AgentModelConfigView = Omit<AgentModelConfig, "apiKey"> & {
+export type AgentModelConfigView = Omit<AgentModelConfig, "apiKey" | "imageApiKey"> & {
+  imageApiKeyConfigured: boolean;
+  imageApiKeyPreview: string;
   apiKeyConfigured: boolean;
   apiKeyPreview: string;
 };
@@ -423,6 +428,9 @@ function readModelConfig(): AgentModelConfig | null {
         baseUrl: parsed.baseUrl!.trim().replace(/\/+$/, ""),
         apiKey: parsed.apiKey!.trim(),
         model: parsed.model!.trim(),
+        imageEnabled: typeof parsed.imageEnabled === "boolean" ? parsed.imageEnabled : Boolean(parsed.imageModel),
+        ...(typeof parsed.imageBaseUrl === "string" && parsed.imageBaseUrl.trim() ? { imageBaseUrl: parsed.imageBaseUrl.trim().replace(/\/+$/, "") } : {}),
+        ...(typeof parsed.imageApiKey === "string" && parsed.imageApiKey.trim() ? { imageApiKey: parsed.imageApiKey.trim() } : {}),
         ...(typeof parsed.imageModel === "string" && parsed.imageModel.trim()
           ? { imageModel: parsed.imageModel.trim() }
           : {}),
@@ -437,12 +445,19 @@ function readModelConfig(): AgentModelConfig | null {
 
 function writeModelConfig(config: AgentModelConfig) {
   ensureDirectories();
-  fs.writeFileSync(MODEL_CONFIG_PATH, JSON.stringify(config, null, 2));
+  fs.writeFileSync(MODEL_CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.chmodSync(MODEL_CONFIG_PATH, 0o600);
   fs.mkdirSync(HOME_DIR, { recursive: true });
   fs.writeFileSync(RUNTIME_CREDENTIALS_PATH, stringifyYaml({
     [MODEL_API_KEY_ENV]: config.apiKey,
   }), { mode: 0o600 });
   fs.chmodSync(RUNTIME_CREDENTIALS_PATH, 0o600);
+  // GPT-6 models on Chat Completions reject function tools unless
+  // reasoning_effort is explicitly `none`. The harness's `off` level normally
+  // omits the wire parameter, so declare its wire spelling for this family
+  // and make it the managed route default. Other models retain their catalog
+  // defaults.
+  const gpt6ChatCompletions = /^gpt-6(?:-|$)/i.test(config.model);
   fs.writeFileSync(RUNTIME_SETTINGS_PATH, stringifyYaml({
     "agent-default-model": {
       provider: "managed",
@@ -456,7 +471,15 @@ function writeModelConfig(config: AgentModelConfig) {
           api: "openai-completions",
           baseURL: config.baseUrl,
           defaultInput: ["text", "image"],
-          models: [{ id: config.model }],
+          ...(gpt6ChatCompletions ? { reasoning: "off" } : {}),
+          models: [
+            {
+              id: config.model,
+              ...(gpt6ChatCompletions
+                ? { reasoningEfforts: { off: "none", medium: "medium" } }
+                : {}),
+            },
+          ],
         },
       },
     },
@@ -469,6 +492,10 @@ function modelConfigView(config: AgentModelConfig | null): AgentModelConfigView 
     baseUrl: config.baseUrl,
     model: config.model,
     imageModel: config.imageModel || "",
+    imageEnabled: config.imageEnabled ?? Boolean(config.imageModel),
+    imageBaseUrl: config.imageBaseUrl || config.baseUrl,
+    imageApiKeyConfigured: Boolean(config.imageApiKey),
+    imageApiKeyPreview: config.imageApiKey ? (config.imageApiKey.length > 8 ? `${config.imageApiKey.slice(0, 4)}••••${config.imageApiKey.slice(-4)}` : "••••") : "",
     apiKeyConfigured: Boolean(config.apiKey),
     apiKeyPreview: config.apiKey ? `${config.apiKey.slice(0, 4)}••••${config.apiKey.slice(-4)}` : "",
   };
@@ -483,6 +510,34 @@ export function getConfiguredAgentModelCredentials() {
   return config ? { ...config } : null;
 }
 
+/**
+ * Prefer the current OpenAI Chat Completions parameter. Older private
+ * OpenAI-compatible proxies may only accept `max_tokens`, so fall back to
+ * the legacy parameter only when the provider explicitly rejects the
+ * standard `max_completion_tokens` parameter. Do not send `temperature`:
+ * some current OpenAI models accept only the default value, and omitting it
+ * also remains compatible with older proxies.
+ */
+async function postChatCompletion(baseUrl: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number) {
+  const send = (tokenParameter: "max_tokens" | "max_completion_tokens") => {
+    const { max_tokens, max_completion_tokens, ...rest } = body;
+    const tokenLimit = max_tokens ?? max_completion_tokens;
+    return fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ ...rest, ...(tokenLimit === undefined ? {} : { [tokenParameter]: tokenLimit }) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  };
+
+  const response = await send("max_completion_tokens");
+  if (response.ok) return response;
+
+  const detail = await response.clone().text();
+  const rejectsStandardTokenLimit = /unsupported parameter\s*:?\s*["'`]?max_completion_tokens|["'`]max_completion_tokens["'`].{0,100}(?:not supported|unsupported)|use\s+["'`]max_tokens["'`]/i.test(detail);
+  return rejectsStandardTokenLimit ? send("max_tokens") : response;
+}
+
 export async function requestConfiguredAgentCompletion(input: {
   system: string;
   user: string;
@@ -492,20 +547,14 @@ export async function requestConfiguredAgentCompletion(input: {
   const config = readModelConfig();
   if (!config) return null;
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-    body: JSON.stringify({
+  const response = await postChatCompletion(config.baseUrl, config.apiKey, {
       model: config.model,
       messages: [
         { role: "system", content: input.system },
         { role: "user", content: input.user },
       ],
       max_tokens: input.maxTokens ?? 700,
-      temperature: 0,
-    }),
-    signal: AbortSignal.timeout(input.timeoutMs ?? 12000),
-  });
+    }, input.timeoutMs ?? 12000);
 
   if (!response.ok) throw new Error(`模型请求失败（${response.status}）`);
   const payload = await response.json() as {
@@ -516,10 +565,7 @@ export async function requestConfiguredAgentCompletion(input: {
 }
 
 async function verifyAgentModelConfig(baseUrl: string, apiKey: string, model: string) {
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
+  const response = await postChatCompletion(baseUrl, apiKey, {
       model,
       messages: [{
         role: "user",
@@ -529,18 +575,17 @@ async function verifyAgentModelConfig(baseUrl: string, apiKey: string, model: st
         ],
       }],
       max_tokens: 16,
-      temperature: 0,
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
+    }, 15000);
 
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 240);
-    throw new Error(`模型配置校验失败：当前模型或代理不支持图片输入（${response.status}）${detail ? `：${detail}` : ""}`);
+    const imageUnsupported = /image_url|image input|vision|图片.{0,8}(?:不支持|unsupported)|(?:不支持|unsupported).{0,8}图片/i.test(detail);
+    const reason = imageUnsupported ? "当前模型或代理不支持图片输入" : "模型服务返回错误";
+    throw new Error(`模型配置校验失败：${reason}（${response.status}）${detail ? `：${detail}` : ""}`);
   }
 }
 
-export async function saveAgentModelConfig(input: Partial<AgentModelConfig>, keepExistingApiKey = true) {
+export async function saveAgentModelConfig(input: Partial<AgentModelConfig> & { clearImageApiKey?: boolean }, keepExistingApiKey = true) {
   const existing = readModelConfig();
   const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl.trim().replace(/\/+$/, "") : "";
   const model = typeof input.model === "string" ? input.model.trim() : "";
@@ -552,9 +597,53 @@ export async function saveAgentModelConfig(input: Partial<AgentModelConfig>, kee
   if (!baseUrl || !model || !apiKey) throw new Error("请填写完整的模型地址、API Key 和模型名称");
   new URL(baseUrl);
   await verifyAgentModelConfig(baseUrl, apiKey, model);
-  const nextConfig: AgentModelConfig = { baseUrl, apiKey, model, ...(imageModel ? { imageModel } : {}) };
+  const imageApiKey = input.clearImageApiKey ? "" : input.imageApiKey?.trim() || existing?.imageApiKey || "";
+  const nextConfig: AgentModelConfig = { ...(existing?.imageBaseUrl ? { imageBaseUrl: existing.imageBaseUrl } : {}), imageEnabled: existing?.imageEnabled ?? Boolean(imageModel), baseUrl, apiKey, model, ...(imageModel ? { imageModel } : {}), ...(imageApiKey ? { imageApiKey } : {}) };
   writeModelConfig(nextConfig);
   return modelConfigView(nextConfig);
+}
+
+/** Scoped settings actions: testing never writes; saving never calls a provider. */
+export async function updateScopedModelConfig(section: "chat" | "image", action: "test" | "save", input: Partial<AgentModelConfig> & { clearImageApiKey?: boolean }) {
+  const existing = readModelConfig();
+  let next: AgentModelConfig;
+  if (section === "chat") {
+    const baseUrl = input.baseUrl?.trim().replace(/\/+$/, "") || "";
+    const model = input.model?.trim() || "";
+    const apiKey = input.apiKey?.trim() || existing?.apiKey || "";
+    if (!baseUrl || !model || !apiKey) throw new Error("请填写完整的模型地址、API Key 和模型名称");
+    const url = new URL(baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("请填写有效的 HTTP(S) 服务地址");
+    next = { ...existing, ...(existing?.imageModel ? { imageBaseUrl: existing.imageBaseUrl || existing.baseUrl, imageApiKey: existing.imageApiKey || existing.apiKey } : {}), baseUrl, model, apiKey };
+    if (action === "test") await verifyAgentModelConfig(baseUrl, apiKey, model);
+  } else {
+    if (!existing) throw new Error("请先完成 Runtime 的初始模型配置");
+    const imageBaseUrl = input.imageBaseUrl === undefined ? existing.imageBaseUrl || existing.baseUrl : input.imageBaseUrl.trim().replace(/\/+$/, "");
+    if (!imageBaseUrl) throw new Error("请填写图片服务地址");
+    const imageUrl = new URL(imageBaseUrl);
+    if (!["http:", "https:"].includes(imageUrl.protocol) || imageUrl.username || imageUrl.password || imageUrl.search || imageUrl.hash) throw new Error("请填写有效的 HTTP(S) 图片服务地址");
+    if (imageBaseUrl !== (existing.imageBaseUrl || existing.baseUrl) && (!input.imageApiKey?.trim() || input.clearImageApiKey)) throw new Error("图片服务地址已变更，请填写该服务的 API Key，避免向新服务发送原密钥");
+    next = { ...existing, imageBaseUrl, imageModel: input.imageModel?.trim() || "", imageEnabled: input.imageEnabled ?? existing.imageEnabled ?? Boolean(existing.imageModel) };
+    if (action === "save" && next.imageEnabled && !next.imageModel) throw new Error("启用图片生成前请填写模型名称");
+    const imageApiKey = input.clearImageApiKey ? "" : input.imageApiKey?.trim() || existing.imageApiKey || "";
+    if (!imageApiKey && imageBaseUrl !== existing.baseUrl) throw new Error("独立图片服务必须配置自己的 API Key，不能共用对话服务密钥");
+    if (imageApiKey) next.imageApiKey = imageApiKey;
+    else delete next.imageApiKey;
+    if (action === "test") {
+      if (!next.imageModel) throw new Error("请填写图片模型名称");
+      const response = await fetch(`${next.imageBaseUrl}/images/generations`, {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(180000),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${next.imageApiKey || next.apiKey}` },
+        body: JSON.stringify({ model: next.imageModel, prompt: "A plain blue circle on a white background, no text.", size: "1024x1024", quality: "low", n: 1 }),
+      });
+      if (!response.ok) throw new Error(`图片模型测试失败（${response.status}），请检查模型和密钥`);
+      const result = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> };
+      if (!result.data?.some(item => item.b64_json || item.url)) throw new Error("图片服务未返回有效图片");
+    }
+  }
+  if (action === "test") return null;
+  writeModelConfig(next);
+  return modelConfigView(next);
 }
 
 function readStateFile(): AgentRuntimeStateFile {

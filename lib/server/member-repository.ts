@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2/promise";
+import { normalizeAvatar } from "@/lib/avatar";
 
 import { normalizeUserRole, type UserRole } from "@/lib/auth/roles";
 import { createSalt, hashPassword } from "@/lib/server/password";
@@ -9,6 +10,7 @@ export type MemberRole = UserRole;
 export type MemberRecord = {
   id: number;
   name: string;
+  avatar: string | null;
   username: string;
   email: string;
   role: MemberRole;
@@ -19,6 +21,7 @@ export type MemberRecord = {
 type MemberRow = RowDataPacket & {
   id: number;
   name: string;
+  avatar: string | null;
   username: string;
   email: string | null;
   role: string | null;
@@ -34,6 +37,7 @@ function normalizeMember(row: MemberRow): MemberRecord {
   return {
     id: Number(row.id),
     name: row.name,
+    avatar: normalizeAvatar(row.avatar),
     username: row.username,
     email: row.email || "",
     role: normalizeUserRole(row.role),
@@ -44,7 +48,7 @@ function normalizeMember(row: MemberRow): MemberRecord {
 
 export async function listMembers(tenantId: number) {
   const [rows] = await getDbPool().query<MemberRow[]>(
-    "SELECT id, name, username, email, role, status, last_active FROM tenant_user WHERE tenant_id = ? ORDER BY id ASC",
+    "SELECT id, name, avatar, username, email, role, status, last_active FROM tenant_user WHERE tenant_id = ? ORDER BY id ASC",
     [tenantId],
   );
   return rows.map(normalizeMember);
@@ -52,7 +56,7 @@ export async function listMembers(tenantId: number) {
 
 export async function getMember(tenantId: number, id: number) {
   const [rows] = await getDbPool().query<MemberRow[]>(
-    "SELECT id, name, username, email, role, status, last_active FROM tenant_user WHERE tenant_id = ? AND id = ? LIMIT 1",
+    "SELECT id, name, avatar, username, email, role, status, last_active FROM tenant_user WHERE tenant_id = ? AND id = ? LIMIT 1",
     [tenantId, id],
   );
   return rows[0] ? normalizeMember(rows[0]) : null;

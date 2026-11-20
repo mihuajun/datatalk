@@ -7,6 +7,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { ensureWorkspaceStorageLayout, RUNTIME_STORAGE_ROOT } from "@/lib/server/workspace-storage";
 
 import { AUTH_COOKIE_NAME } from "@/lib/auth/constants";
+import { normalizeAvatar } from "@/lib/avatar";
 import { canAccessMembersRole, canManageMembersRole, isAdminRole, isAdministratorRole, normalizeUserRole as normalizeRoleValue, type UserRole } from "@/lib/auth/roles";
 import { getDbPool } from "@/lib/server/mysql";
 
@@ -17,6 +18,7 @@ export type AuthSession = {
   tenantId: number;
   username: string;
   name: string;
+  avatar?: string | null;
   role: UserRole;
 };
 
@@ -25,6 +27,7 @@ type AuthUserRow = RowDataPacket & {
   tenant_id: number;
   username: string;
   name: string;
+  avatar?: string | null;
   role?: string | null;
   status: number;
 };
@@ -121,7 +124,7 @@ export async function getAuthSession() {
 
   try {
     const [rows] = await getDbPool().query<AuthUserRow[]>(
-      "SELECT id, tenant_id, username, name, role, status FROM tenant_user WHERE id = ? AND tenant_id = ? LIMIT 1",
+      "SELECT id, tenant_id, username, name, avatar, role, status FROM tenant_user WHERE id = ? AND tenant_id = ? LIMIT 1",
       [session.userId, session.tenantId],
     );
     const user = rows[0];
@@ -134,6 +137,7 @@ export async function getAuthSession() {
       ...session,
       username: user.username,
       name: user.name || session.name,
+      avatar: normalizeAvatar(user.avatar),
       role: normalizeUserRole(user.role),
     };
   } catch (error) {

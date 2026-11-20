@@ -208,10 +208,20 @@ export function apply(ctx) {
   }));
 
   ctx.tools.register(defineTool({
+    name: "read_report_metric_bindings",
+    description: "读取当前报表实际绑定的指标历史版本，解释旧报表时优先使用，不能自动替换为最新口径。",
+    parameters: {},
+    output: { schema: { type: "json" }, render: (_args, value) => jsonText(value) },
+    async execute(args, exec) { return callTool("read_report_metric_bindings", args, exec); },
+  }));
+
+  ctx.tools.register(defineTool({
     name: "search_metric_knowledge",
-    description: "按指标名称或别名检索当前租户已确认的指标口径，并判断应复用、确认还是新建。",
+    description: "混合关键词与向量检索当前租户有效指标，返回版本、口径冲突和检索降级状态；相似不代表可直接复用。",
     parameters: {
       query: { type: "string", required: true, description: "用户使用的指标名称，例如 GMV、成交总额、转化率。" },
+      grainHint: { type: "string", description: "要求的统计粒度。" },
+      dimensions: { type: "array", items: { type: "string" }, description: "要求支持的维度。" },
       formulaHint: { type: "string", description: "用户明确提到的公式、分子或分母。" },
       timeFieldHint: { type: "string", description: "用户明确提到的时间字段或时间语义。" },
       filters: { type: "array", items: { type: "string" }, description: "用户明确提出的过滤条件。" },
@@ -230,19 +240,17 @@ export function apply(ctx) {
 
   ctx.tools.register(defineTool({
     name: "propose_metric_knowledge",
-    description: "提交本轮报表实际使用的结构化指标口径候选；服务端只会在 SQL 预览和报表提交成功后发布。",
+    description: "提交本轮报表实际使用的纯文本指标语义候选；服务端只会在 SQL 预览和报表提交成功后发布。",
     parameters: {
       metricKey: { type: "string", description: "复用或更新时使用检索结果中的稳定指标 key；新指标可省略。" },
       name: { type: "string", required: true, description: "指标主名称。" },
       aliases: { type: "array", items: { type: "string" }, description: "用户已确认的别名。" },
-      definition: { type: "string", required: true, description: "清晰、可复核的业务定义。" },
-      formula: { type: "string", required: true, description: "指标公式，包含聚合方式、字段或分子分母。" },
-      grain: { type: "string", description: "基础统计粒度，例如 order、user、day。" },
-      timeField: { type: "string", description: "时间字段或时间口径。" },
-      filters: { type: "array", items: { type: "string" }, description: "影响口径的过滤条件。" },
-      dedupRule: { type: "string", description: "去重字段和规则。" },
-      dataSource: { type: "string", description: "实现使用的数据源名称。" },
-      sourceRef: { type: "string", required: true, description: "当前报表实现位置，例如 server.js#handler:sales-summary。" },
+      content: { type: "string", required: true, description: "完整纯文本语义说明。按 Skill 模板描述业务定义、数据源/真实表字段、公式、粒度、时间、关联、过滤、去重、维度、单位空值处理、SQL示例和未确认项；不得编造缺失映射。" },
+      keywords: { type: "array", items: { type: "string" }, description: "用于召回的业务关键词，不冒充同义别名。" },
+      dataSource: { type: "string", description: "本次 SQL 校验使用的数据源名称（执行参数，不是第二份语义定义）。" },
+      validationParams: { type: "json", description: "该指标校验 SQL 的命名参数对象。" },
+      validationSql: { type: "string", description: "该指标实际使用的只读 SQL，服务端独立校验，不使用其他 SQL 的成功记录。" },
+      baseVersion: { type: "integer", required: true, description: "检索或读取时的版本，新指标为 0；必须传递以检测并发变更。" },
       confirmed: { type: "boolean", required: true, description: "用户是否已明确给出口径、选择候选或确认更新。" },
     },
     output: {

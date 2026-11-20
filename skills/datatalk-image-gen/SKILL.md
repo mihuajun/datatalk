@@ -18,9 +18,9 @@ description: 为 DataTalk 报表生成照片、位图插画、背景图、封面
 ## 生成与接入
 
 - 提示词应完整描述主体、场景、构图、视角、光线、色彩、留白位置和需要避免的内容；不要在提示词中放入凭据或固定模型名。
-- 根据版位选择尺寸：方形使用 `1024x1024`，横向封面或横幅使用 `1536x1024`，纵向海报使用 `1024x1536`。默认使用 `quality=medium` 和 `outputFormat=webp`。
+- 根据版位选择尺寸：方形使用 `1024x1024`，横向封面或横幅使用 `1536x1024`，纵向海报使用 `1024x1536`。默认使用 `quality=medium` 和 `outputFormat=png`；只有用户明确要求其他格式时才选择 WebP 或 JPEG。
 - 需要透明背景时使用 `background=transparent`，并选择 PNG 或 WebP；不要与 JPEG 组合。
-- 当前任务位于报表编辑页时，默认使用 `saveMode=report_asset`。Tool 返回 `assetId`、`relativePath` 和 `assetUrl` 后，优先在 `page.html` 或 `styles.css` 中引用稳定的 `assetUrl`；宿主会在预览和发布时统一解析。旧的 `relativePath` 只用于兼容既有报表。
+- 当前任务位于报表编辑页时，默认使用 `saveMode=report_asset`。Tool 返回 `assetId`、`relativePath` 和 `assetUrl` 后，优先在 `page.html` 或 `styles.css` 中引用稳定的 `assetUrl`；宿主会在预览和发布时统一解析。旧的 `relativePath` 只用于兼容既有报表。需要在 `app.js` 中动态创建图片时，使用 Tool 返回的完整 `assetUrl` 字符串；宿主会在执行脚本前解析完整资源引用。不要拆分拼接协议、目录和文件名，也不要把服务器绝对路径或会话附件 URL 当作报表资源地址。
 - 只有用户明确要求“只生成图片”“仅在对话查看”“不要放入报表”时，使用 `saveMode=conversation_only`，且不修改报表文件。
 - 不自行解码或保存 Tool 的图片附件，不从 Tool 结果拼接 Base64；报表资产写入由 Tool 完成。
 - 图片生成成功并取得 `assetId` 后，后续破图、裁切、定位、快照刷新或接入方式调整都必须复用该资产，不得再次调用图片模型。只有本次调用没有产生有效资产且错误明确可重试时，才允许重新生成。
@@ -33,3 +33,5 @@ description: 为 DataTalk 报表生成照片、位图插画、背景图、封面
 - 调用 `inspect_report_preview` 查看 `imageAssets` 诊断、包含图片的目标区块和整页。必须确认 `<img>` 没有 `failed/pending`、CSS 背景没有 `unresolved`，并检查错误、空白、拉伸、遮挡和旧视觉重叠；接入失败时修复引用并复用原 `assetId`。
 - `IMAGE_MODEL_NOT_CONFIGURED` 表示管理员尚未设置图片模型，应明确说明需在模型设置中填写图片模型，不得把占位图冒充生成结果。
 - 其他生成错误应保留错误码并说明本次未生成，不得虚构图片路径或声称已经接入。
+
+- `IMAGE_MODEL_DISABLED` 表示管理员已关闭图片生成，不能自动绕过开关或改用其他模型；提示用户在模型配置中启用并保存。

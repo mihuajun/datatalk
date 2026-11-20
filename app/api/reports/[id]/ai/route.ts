@@ -6,12 +6,13 @@ import { registerReportPreviewClient } from "@/lib/server/report-preview-inspect
 import { isReportEditLockEnabled } from "@/lib/server/report-edit-lock";
 import { getReportAiConversation, getReportDetailByCode, readReportWorkspaceSnapshot, saveReportAiConversationIndex, updateReportAiConversationTitle } from "@/lib/server/report-repository";
 import { getWorkspaceHead, getWorkspaceStatusEntries } from "@/lib/server/local-git";
-import { finalizeMetricKnowledgeProposals } from "@/lib/server/report-metric-knowledge-service";
 import { cleanupRuntimeAttachments, stageRuntimeAttachments, type RuntimeAttachmentInput } from "@/lib/server/report-runtime-attachments";
 import { getReportWorkingPath, isAllowedReportWorkingFile } from "@/lib/server/report-workspace";
 import { withReportAiWorkspaceCommitLock } from "@/lib/server/report-ai-workspace-lock";
 import { validateReportWorkspace } from "@/lib/server/report-schema";
 import { commitRuntimeWorkspaceChanges } from "@/lib/server/report-workspace-service";
+import { isRegistrationEnabled } from "@/lib/server/auth-config";
+import { consumeTenantConversationQuota, CONVERSATION_QUOTA_EXHAUSTED_MESSAGE } from "@/lib/server/conversation-quota";
 
 function sseEvent(type: string, payload: unknown) {
   return `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -259,6 +260,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return new Response(JSON.stringify({ message: attachmentError instanceof Error ? attachmentError.message : "附件上传失败" }), { status: 400, headers: { "Content-Type": "application/json" } });
   }
 
+  // Quota is intentionally disabled whenever self-registration is disabled.
+  // When enabled, every valid user-initiated AI request consumes one tenant-wide
+  // turn before the runtime is called; internal model/tool turns are not counted.
+  if (isRegistrationEnabled()) {
+    try {
+      const consumed = await consumeTenantConversationQuota(session.tenantId);
+      if (!consumed) {
+        await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
+        return new Response(JSON.stringify({ message: CONVERSATION_QUOTA_EXHAUSTED_MESSAGE }), { status: 402, headers: { "Content-Type": "application/json" } });
+      }
+    } catch (quotaError) {
+      await cleanupRuntimeAttachments(stagedAttachments.directoryPath);
+      console.error("Consume Studio conversation quota failed", { tenantId: session.tenantId, error: quotaError });
+      return new Response(JSON.stringify({ message: "对话配额暂时不可用，请稍后重试。" }), { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
   let clientDisconnected = false;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -476,6 +494,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           if (!hasWorkspaceChanges) return { hasWorkspaceChanges, changedFiles, deletedFiles, commitResult: null };
 
           const commitResult = await commitRuntimeWorkspaceChanges({
+            metricSessionId: runtimeResult.dshSessionId,
             tenantId: session.tenantId,
             reportCode,
             userId: session.userId,
@@ -488,37 +507,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             // a stale hash captured before earlier queued turns finished.
             baseCommitHash: (await getWorkspaceHead(session.tenantId, reportCode)) ?? undefined,
           });
-          return { hasWorkspaceChanges, changedFiles, deletedFiles, commitResult };
+          const metricKnowledge = commitResult.metricKnowledge;
+          if ("pending" in metricKnowledge) send("warning", { message: metricKnowledge.message });
+          else {
+            if (metricKnowledge.drafts) send("warning", { message: `${metricKnowledge.drafts} 个候选缺少确认或独立 SQL 校验，尚未生效` });
+            if (metricKnowledge.rejected) send("warning", { message: `${metricKnowledge.rejected} 个候选因版本或状态冲突未生效，请重新读取指标` });
+          }
+          return { hasWorkspaceChanges, changedFiles, deletedFiles, commitResult, metricKnowledge };
         });
         const { changedFiles, deletedFiles, hasWorkspaceChanges } = workspaceCommit;
-
-        let commitHash: string | null = null;
-        let auditId: number | null = null;
-        let metricKnowledge: Awaited<ReturnType<typeof finalizeMetricKnowledgeProposals>> | null = null;
+        const commitHash = workspaceCommit.commitResult?.commitHash || null;
+        const auditId = workspaceCommit.commitResult?.auditId || null;
+        const metricKnowledge = "metricKnowledge" in workspaceCommit ? workspaceCommit.metricKnowledge : null;
         if (hasWorkspaceChanges && workspaceCommit.commitResult) {
-          const commitResult = workspaceCommit.commitResult;
-          commitHash = commitResult.commitHash;
-          auditId = commitResult.auditId;
-          try {
-            metricKnowledge = await finalizeMetricKnowledgeProposals({
-              tenantId: session.tenantId,
-              reportCode,
-              conversationId: persistedConversationId || conversationId || null,
-              dshSessionId: runtimeResult.dshSessionId,
-              opId: commitResult.opId,
-            });
-            if (metricKnowledge.drafts > 0) {
-              send("warning", { message: `报表已提交；${metricKnowledge.drafts} 个指标候选因缺少确认或 SQL 预览保留为草稿` });
-            }
-          } catch (metricKnowledgeError) {
-            console.error("[report-ai] metric knowledge finalization failed", {
-              tenantId: session.tenantId,
-              reportCode,
-              dshSessionId: runtimeResult.dshSessionId,
-              error: metricKnowledgeError,
-            });
-            send("warning", { message: "报表已提交，但指标知识沉淀失败；候选仍保留，可稍后补偿" });
-          }
           const snapshot = await readReportWorkspaceSnapshot(session.tenantId, reportCode);
           send("runtime", { type: "workspace_snapshot", data: snapshot });
         }

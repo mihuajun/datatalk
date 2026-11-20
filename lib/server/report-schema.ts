@@ -1,3 +1,4 @@
+import { parseMetricBindings } from "@/lib/server/report-metric-knowledge-service";
 import fs from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
@@ -68,6 +69,7 @@ export async function validateReportWorkspace(tenantId: number, reportCode: stri
     for (const key of ["schemaVersion", "reportCode", "tenantId", "name", "entry", "format"]) {
       if (!(key in report)) addIssue(issues, "report.json", `缺少字段 ${key}`);
     }
+    try { parseMetricBindings(report.metricBindings); } catch { addIssue(issues, "report.json", "metricBindings 必须是唯一 metricKey 和正整数 version 的数组"); }
     if (report.schemaVersion !== "1.0") addIssue(issues, "report.json", "schemaVersion 必须为 1.0");
     if (report.reportCode !== reportCode) addIssue(issues, "report.json", "reportCode 与当前报表不一致");
     if (String(report.entry) !== "page.html") addIssue(issues, "report.json", "entry 必须指向 page.html");

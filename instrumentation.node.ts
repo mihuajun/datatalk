@@ -51,5 +51,5 @@ export async function register() {
 
   await ensureDatabaseBootstrap();
   console.info("应用数据库初始化检查完成");
-  await startManagedAgentRuntime();
+  if (process.env.AUTO_START_AGENT_RUNTIME !== "false") await startManagedAgentRuntime();
 }

@@ -11,7 +11,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (typeof body.targetCommitHash === "string") {
       const result = await restoreReportEditToCommit({ tenantId: session.tenantId, reportCode, userId: session.userId, targetCommitHash: body.targetCommitHash, lockToken: typeof body.lockToken === "string" ? body.lockToken : undefined });
       const current = await getReportDetailByCode(session.tenantId, reportCode);
-      return NextResponse.json({ ...result, webFiles: current?.webFiles, filterManifest: current?.filterManifest, report: current?.report });
+      return NextResponse.json({ ...result, workspaceFingerprint: current?.workspaceFingerprint, webFiles: current?.webFiles, filterManifest: current?.filterManifest, report: current?.report });
     }
     if (!Number.isInteger(body.auditId)) return NextResponse.json({ message: "auditId 无效" }, { status: 400 });
     return NextResponse.json(await rollbackReportEdit(session.tenantId, reportCode, session.userId, body.auditId as number, typeof body.lockToken === "string" ? body.lockToken : undefined));

@@ -20,6 +20,7 @@ type ConfigValue<T> = T | {
 export type AppConfig = {
   site?: {
     webAppUrl?: ConfigValue<string>;
+    studioPublicUrl?: ConfigValue<string>;
   };
   database?: {
     url?: ConfigValue<string>;
@@ -34,6 +35,10 @@ export type AppConfig = {
   };
   auth?: {
     allowRegistration?: ConfigValue<boolean> | ConfigValue<string>;
+    workbuddy?: {
+      clientId?: ConfigValue<string>;
+      clientSecret?: ConfigValue<string>;
+    };
     github?: {
       clientId?: ConfigValue<string>;
       clientSecret?: ConfigValue<string>;
@@ -87,8 +92,9 @@ function parseBoolean(value: unknown, fieldName: string) {
   throw new Error(`Invalid boolean config field: ${fieldName}`);
 }
 
-export function readAppConfig(): AppConfig | null {
-  const resolvedPath = CONFIG_SEARCH_PATHS.find((candidatePath) => fs.existsSync(candidatePath)) ?? null;
+export function readAppConfig(configPath?: string): AppConfig | null {
+  const override = configPath?.trim() || process.env.STUDIO_CONFIG_PATH?.trim();
+  const resolvedPath = override ? path.resolve(override) : CONFIG_SEARCH_PATHS.find((candidatePath) => fs.existsSync(candidatePath)) ?? null;
   if (!resolvedPath) return null;
 
   const fileContent = fs.readFileSync(/*turbopackIgnore: true*/ resolvedPath, "utf8");

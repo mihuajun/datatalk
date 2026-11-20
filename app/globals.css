@@ -150,6 +150,36 @@ textarea {
   box-shadow: 0 1px 2px rgba(23, 36, 58, 0.03);
 }
 
+@media (min-width: 1024px) {
+  .console-canvas {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .console-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    align-self: start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .console-main {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+}
+
 @media (max-width: 1023px) {
   .console-canvas {
     display: block;
@@ -199,16 +229,15 @@ textarea {
 
 .settings-page {
   min-height: calc(100vh - 48px);
-  padding: 28px 32px 40px;
+  padding: 28px 0 40px;
   background: #f7f9fc;
 }
 
 .settings-layout {
   display: grid;
   grid-template-columns: 218px minmax(0, 1fr);
-  gap: 52px;
-  max-width: 1240px;
-  margin: 0 auto;
+  gap: 24px;
+  width: 100%;
 }
 
 .settings-nav {
@@ -496,7 +525,7 @@ textarea {
 }
 
 @media (max-width: 1199px) {
-  .settings-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 28px; }
+  .settings-layout { grid-template-columns: 190px minmax(0, 1fr); gap: 24px; }
   .settings-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .settings-fact:nth-child(4) { border-left: 0; }
   .settings-detail-grid { grid-template-columns: 1fr; }
@@ -504,7 +533,7 @@ textarea {
 }
 
 @media (max-width: 767px) {
-  .settings-page { padding: 20px 16px 32px; }
+  .settings-page { padding: 20px 0 32px; }
   .settings-layout { display: block; }
   .settings-nav { margin-bottom: 26px; }
   .settings-nav nav { display: flex; gap: 6px; overflow-x: auto; margin-top: 16px; }
@@ -716,4 +745,20 @@ textarea {
   .report-preview {
     animation: none;
   }
+}
+
+/* Unchanged model settings are not actionable, rather than busy. */
+#agent-model-config .settings-primary-button:disabled,
+#image-model-config .settings-primary-button:disabled,
+#embedding-model-config .settings-primary-button:disabled {
+  background: #e2e8f0;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.metric-settings-note { padding-left: 24px; padding-right: 24px; }
+@media (max-width: 767px) {
+  .metric-settings-note { padding-left: 16px; padding-right: 16px; }
 }

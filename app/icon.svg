@@ -1,11 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#F7FBFF"/>
-  <rect x="2" y="2" width="60" height="60" rx="12" stroke="#BBD7FF" stroke-width="2"/>
-  <path d="M16 15v34M27 15v34M38 15v34M49 15v34M16 15h33M16 27h33M16 38h33M16 49h33" stroke="#D6E8FF" stroke-width="1.5"/>
-  <path d="m13 43 12-13 10 6 16-18" stroke="#2167E8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="13" cy="43" r="5" fill="#52CDE5" stroke="#fff" stroke-width="2"/>
-  <circle cx="25" cy="30" r="5" fill="#2167E8" stroke="#fff" stroke-width="2"/>
-  <circle cx="35" cy="36" r="5" fill="#756CF4" stroke="#fff" stroke-width="2"/>
-  <circle cx="51" cy="18" r="5" fill="#18B981" stroke="#fff" stroke-width="2"/>
-  <path d="m39 39 11 12-7-2-3 7-3-1 3-7-6-3 5-6Z" fill="#17243A"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="200 200 880 880" role="img" aria-label="DataTalk"><title>DataTalk — cobalt and cool white</title><path fill="#3454D1" d="M 370 250 H 638 C 850 250 1010 408 1010 608 C 1010 809 853 963 650 963 H 412 L 302 1040 Q 269 1060 269 1025 V 350 Q 269 250 370 250 Z"/><path fill="#F5F7FC" d="M 363 862 V 694 Q 363 657 402 657 H 457 Q 495 657 495 694 V 862 Z M 540 862 V 604 Q 540 564 580 564 H 631 Q 672 564 672 604 V 862 Z M 719 862 V 547 Q 719 506 759 506 H 805 Q 847 506 847 547 V 768 C 847 826 795 862 719 862 Z M 842 416 A 60 60 0 1 0 722 416 A 60 60 0 1 0 842 416 Z"/></svg>

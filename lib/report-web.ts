@@ -36,6 +36,20 @@ export function inlineWebReportAssets(source: string, assets: Record<string, str
   });
 }
 
+// Replace only URL tokens in JS source, never HTML attributes/CSS wrappers:
+// inserting quotes here would corrupt quoted innerHTML and CSS strings.
+export function inlineWebReportScriptAssets(source: string, assets: Record<string, string> | undefined) {
+  if (!assets) return source;
+  return source.replace(/(^|[\s"'`(=,:])((?:datatalk-asset:\/\/|\.\/|\/)?assets\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#][^\s"'`\\()<>]*)?)/gim,
+    (match, boundary: string, reference: string) => {
+      const dataUrl = assets[normalizeReportAssetReference(reference)];
+      // Only server-generated base64 image URLs are safe to inject verbatim
+      // into any JS quoting context (including template literals).
+      return dataUrl && /^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(dataUrl)
+        ? `${boundary}${dataUrl}` : match;
+    });
+}
+
 export const REPORT_DEFAULT_CANVAS_WIDTH = 1180;
 export const REPORT_MAX_CANVAS_WIDTH = 2400;
 
@@ -1899,7 +1913,7 @@ function buildRuntimeHelperScript() {
 export function composeWebReportSrcDoc(files: WebFileMap, context?: { filters?: Record<string, unknown>; urlFilters?: Record<string, unknown>; defaults?: Record<string, unknown>; workspaceFingerprint?: string }) {
   const html = inlineWebReportAssets(files["page.html"] || "<!doctype html><html><head></head><body></body></html>", files.assets);
   const styles = safeInline(inlineWebReportAssets(files["styles.css"] || "", files.assets), "style");
-  const script = safeInline(files["app.js"] || "", "script");
+  const script = safeInline(inlineWebReportScriptAssets(files["app.js"] || "", files.assets), "script");
   const runtimeHelper = safeInline(buildRuntimeHelperScript(), "script");
   const runtimeContext = safeInline(`window.__DATATALK_REPORT_CONTEXT__=${JSON.stringify({ filters: context?.filters || {}, urlFilters: context?.urlFilters || {}, defaults: context?.defaults || {}, workspaceFingerprint: context?.workspaceFingerprint || "" })};`, "script");
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' http: https:; img-src data: blob: http: https:; font-src data: https:;">`;

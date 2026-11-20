@@ -10,8 +10,9 @@ export function PublicLinkAccessForm({ shortCode }: { shortCode: string }) {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!/^\d{4}$/.test(password) || submitting) {
-      setError("请输入 4 位数字密码");
+    const passwordLength = [...password].length;
+    if (passwordLength < 4 || passwordLength > 20 || submitting) {
+      setError("请输入 4 至 20 个字符的密码");
       return;
     }
 
@@ -37,18 +38,17 @@ export function PublicLinkAccessForm({ shortCode }: { shortCode: string }) {
       <section className="w-full max-w-[380px] rounded-lg border border-[#DDE5F0] bg-white px-6 py-7 shadow-[0_12px_30px_rgba(23,36,58,0.08)]">
         <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[#EDF3FF] text-[#2167E8]"><LockKeyhole className="h-5 w-5" /></div>
         <h1 className="mt-5 text-lg font-bold">请输入访问密码</h1>
-        <p className="mt-2 text-xs leading-5 text-[#8A98AC]">该公共报表受密码保护，请输入 4 位数字密码后继续。</p>
+        <p className="mt-2 text-xs leading-5 text-[#8A98AC]">该公共报表受密码保护，请输入 4 至 20 个字符的密码后继续。</p>
         <form className="mt-6" onSubmit={submit}>
           <label htmlFor="public-link-password" className="text-xs font-semibold text-[#526174]">访问密码</label>
           <input
             id="public-link-password"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={4}
+            autoComplete="current-password"
+            maxLength={20}
             value={password}
-            onChange={(event) => setPassword(event.target.value.replace(/\D/g, "").slice(0, 4))}
-            className="mt-2 h-11 w-full rounded-md border border-[#DDE5F0] px-3 text-center text-lg tracking-[0.35em] text-[#17243A] outline-none transition focus:border-[#2167E8] focus:ring-2 focus:ring-[#2167E8]/10"
-            placeholder="0000"
+            onChange={(event) => setPassword([...event.target.value].slice(0, 20).join(""))}
+            className="mt-2 h-11 w-full rounded-md border border-[#DDE5F0] px-3 text-center text-lg tracking-[0.1em] text-[#17243A] outline-none transition focus:border-[#2167E8] focus:ring-2 focus:ring-[#2167E8]/10"
+            placeholder="请输入密码"
             aria-describedby={error ? "public-link-password-error" : undefined}
           />
           {error ? <p id="public-link-password-error" className="mt-2 text-xs text-[#B42318]">{error}</p> : null}

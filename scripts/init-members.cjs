@@ -33,6 +33,7 @@ async function main() {
   const connection = await mysql.createConnection(databaseConfig);
   try {
     await addColumnIfMissing(connection, "email", "varchar(160) NULL AFTER username");
+    await addColumnIfMissing(connection, "avatar", "varchar(2048) NULL AFTER name");
     await addColumnIfMissing(connection, "phone", "varchar(20) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER username");
     await addColumnIfMissing(connection, "role", "varchar(20) NOT NULL DEFAULT 'developer' AFTER email");
     await addColumnIfMissing(connection, "last_active", "timestamp NULL AFTER status");

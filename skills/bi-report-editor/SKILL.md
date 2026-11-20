@@ -305,7 +305,7 @@ list_reference_reports 和 read_reference_report 都是只读工具。工具会�
 
 1. 使用 `list_data_sources` 确认当前租户可用数据源和精确名称。
 2. 使用 `get_data_source_schema` 查相关表、字段、类型和注释；必要时分关键词或指定表查询。
-3. 若涉及指标口径，先按指标逐个调用 `search_metric_knowledge`，处理 `reuse`、`confirm` 或 `create` 结果。
+3. 若涉及指标口径，先用 `read_report_metric_bindings` 读取原报表固定版本，再按指标逐个调用 `search_metric_knowledge`，处理 `reuse`、`confirm` 或 `create` 结果；按 `bi-metric-knowledge` 维护 report.json.metricBindings，未经确认不升级旧口径。
 4. 写入 `server.js` 前，为每条最终 SQL 或 REST GET 请求使用 `preview_sql` 预览；预览内容尽量与最终 handler 一致，并覆盖代表性参数。
 5. 只有预览成功、参数映射明确后才写入 handler；不要先写一个猜测 SQL 再用 mock 掩盖失败。
 6. 修改后通过实际 working runtime 执行页面会调用的 handler，并验证返回结构和页面消费字段。
@@ -323,6 +323,7 @@ list_reference_reports 和 read_reference_report 都是只读工具。工具会�
 - list_data_sources
 - get_data_source_schema
 - preview_sql
+- read_report_metric_bindings
 - list_metric_knowledge
 - search_metric_knowledge
 - propose_metric_knowledge

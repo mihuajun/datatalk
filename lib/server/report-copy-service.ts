@@ -159,12 +159,15 @@ export async function copyPublishedResourceReport(input: {
   sourceTenantId: number;
   sourceCode: string;
   sourceAssetType: CopyableResourceAssetType;
+  sourceVersion?: number;
+  name?: string;
 }) {
   const sourceCode = input.sourceCode.trim();
   const sourceResource = await getResourceItemBySource(input.sourceTenantId, input.sourceAssetType, sourceCode);
   if (!sourceResource || sourceResource.status !== "published" || sourceResource.sourceVersion < 1) {
     throw new Error("RESOURCE_NOT_PUBLISHED");
   }
+  if (input.sourceVersion != null && sourceResource.sourceVersion !== input.sourceVersion) throw new Error("RESOURCE_VERSION_CHANGED");
 
   const [sourceRows] = await getDbPool().query<SourceReportRow[]>(
     `SELECT r.name, r.current_release_version, r.owner_id, ri.published_by, rr.source_commit_hash
@@ -214,7 +217,8 @@ export async function copyPublishedResourceReport(input: {
   });
 
   const folderId = await ensureDefaultReportFolder(input.targetTenantId);
-  const reportName = copyName(sourceResource.title || sourceReport.name || sourceCode);
+  const reportName = input.name?.trim() || copyName(sourceResource.title || sourceReport.name || sourceCode);
+  if (reportName.length > 160) throw new Error("REPORT_NAME_TOO_LONG");
   const created = await createReport({
     tenantId: input.targetTenantId,
     folderId,

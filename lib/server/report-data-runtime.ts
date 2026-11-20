@@ -7,41 +7,13 @@ import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2/promise";
 
 import { getDbPool } from "@/lib/server/mysql";
-import type { ReportFilterManifest } from "@/lib/report-filters";
+import { evaluateRuntimeModule, normalizeFilters, normalizeQueryParams, getRuntimeEntry, type RuntimeContext } from "@/lib/report-handler-runtime";
+type RuntimeSource = "working" | "release";
 import { hashPublicLinkPassword, hasPublicLinkAccess } from "@/lib/server/public-link-security";
 import { readReportFilterManifest } from "@/lib/server/report-filter-runtime";
 import { executeReportQuery } from "@/lib/server/report-query-gateway";
 import { isAllowedReportDataFile, resolveReportSourcePath } from "@/lib/server/report-workspace";
 import { getPublishedResourceReportTarget } from "@/lib/server/resource-repository";
-
-type RuntimeSource = "working" | "release";
-type RuntimeFilters = Record<string, unknown>;
-type QueryParamValue = string | number | boolean | null | Array<string | number>;
-
-type RuntimeQueryOptions = {
-  timeoutMs?: number;
-  maxRows?: number;
-  maxBytes?: number;
-};
-
-type RuntimeContext = {
-  tenantId: number;
-  reportCode: string;
-  dataId: string;
-  filters: RuntimeFilters;
-  source: RuntimeSource;
-  query: (dataSource: string, sql: string, params?: Record<string, QueryParamValue>, options?: RuntimeQueryOptions) => Promise<Record<string, unknown>[]>;
-};
-
-type RuntimeHandler =
-  | ((context: RuntimeContext) => unknown | Promise<unknown>)
-  | {
-      resolve: (context: RuntimeContext) => unknown | Promise<unknown>;
-    };
-
-type RuntimeModule = {
-  handlers: Record<string, RuntimeHandler>;
-};
 
 const REPORT_DATA_RUNTIME_EXTENSIONS = new Set([".json", ".csv", ".tsv", ".xlsx", ".xls"]);
 
@@ -50,56 +22,6 @@ type ReportRuntimeTarget = {
   reportCode: string;
   releaseVersion: number | null;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function normalizeFilters(value: unknown, manifest?: ReportFilterManifest | null): RuntimeFilters {
-  const input = isRecord(value) ? value : {};
-  if (!manifest) return input;
-
-  const result: RuntimeFilters = {};
-  for (const filter of manifest.filters) {
-    if (Object.prototype.hasOwnProperty.call(input, filter.key)) {
-      result[filter.key] = input[filter.key];
-      continue;
-    }
-    if (filter.urlKey !== filter.key && Object.prototype.hasOwnProperty.call(input, filter.urlKey)) {
-      result[filter.key] = input[filter.urlKey];
-      continue;
-    }
-    result[filter.key] = filter.defaultValue;
-  }
-  return result;
-}
-
-function toQueryParamValue(value: unknown): QueryParamValue {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-  if (Array.isArray(value) && value.every((item) => typeof item === "string" || typeof item === "number")) {
-    return value;
-  }
-  throw new Error("REPORT_DATA_FILTER_INVALID");
-}
-
-function normalizeQueryParams(value: Record<string, unknown> | undefined) {
-  if (!value) return {};
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toQueryParamValue(item)]));
-}
-
-function getRuntimeEntry(handler: RuntimeHandler) {
-  if (typeof handler === "function") {
-    return { resolve: handler };
-  }
-  if (isRecord(handler) && typeof handler.resolve === "function") {
-    return {
-      resolve: handler.resolve as (context: RuntimeContext) => unknown | Promise<unknown>,
-    };
-  }
-  throw new Error("REPORT_DATA_HANDLER_INVALID");
-}
 
 function resolveReportDataImportPath(tenantId: number, reportCode: string, specifier: string, releaseVersion?: number | null) {
   if (typeof specifier !== "string") throw new Error(`REPORT_SERVER_IMPORT_NOT_ALLOWED: ${String(specifier)}`);
@@ -181,17 +103,9 @@ async function readRuntimeModule(tenantId: number, reportCode: string, source: R
       throw new Error(`REPORT_SERVER_COMPILE_FAILED: ${diagnostics.join("；")}`);
     }
   }
-  const module = { exports: {} as Record<string, unknown> };
-  const require = (specifier: string) => readReportDataFile(tenantId, reportCode, specifier, version);
-  const executable = transpileSource ? result.outputText : sourceText;
-  const run = new Function("exports", "module", "require", `${executable}\n//# sourceURL=${filePath.replaceAll("\\", "/")}`);
-  run(module.exports, module, require);
-  const exported = module.exports as Record<string, unknown>;
-  const handlers = exported.handlers;
-  if (!isRecord(handlers)) throw new Error("REPORT_SERVER_HANDLERS_MISSING");
-  return {
-    handlers: handlers as Record<string, RuntimeHandler>,
-  } satisfies RuntimeModule;
+  return evaluateRuntimeModule(transpileSource ? result.outputText : sourceText,
+    (specifier) => readReportDataFile(tenantId, reportCode, specifier, version), filePath);
+
 }
 
 export async function validateWorkingReportRuntime(tenantId: number, reportCode: string) {

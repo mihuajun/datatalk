@@ -150,7 +150,7 @@ async function main() {
         short_code varchar(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
         enabled tinyint NOT NULL DEFAULT 1,
         password_enabled tinyint NOT NULL DEFAULT 0,
-        password varchar(4) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        password varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
         expires_at datetime NULL,
         created_by bigint unsigned NULL,
         created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -163,7 +163,7 @@ async function main() {
 
     const publicLinkColumns = [
       "ADD COLUMN password_enabled tinyint NOT NULL DEFAULT 0",
-      "ADD COLUMN password varchar(4) CHARACTER SET ascii COLLATE ascii_bin NULL",
+      "ADD COLUMN password varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL",
       "ADD COLUMN expires_at datetime NULL",
     ];
     for (const column of publicLinkColumns) {
@@ -178,7 +178,7 @@ async function main() {
     for (const link of linksMissingPassword) {
       await db.execute("UPDATE report_public_link SET password = ? WHERE id = ? AND password IS NULL", [generatePublicLinkPassword(), link.id]);
     }
-    await db.query("ALTER TABLE report_public_link MODIFY password varchar(4) CHARACTER SET ascii COLLATE ascii_bin NOT NULL");
+    await db.query("ALTER TABLE report_public_link MODIFY password varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
 
     const tenantId = 1;
     const [users] = await db.query("SELECT id, name FROM tenant_user WHERE tenant_id = ? ORDER BY id ASC LIMIT 1", [tenantId]);

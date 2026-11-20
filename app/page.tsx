@@ -4,29 +4,14 @@ import { MessageCircle } from "lucide-react";
 import { LoginForm } from "@/components/auth/login-form";
 import { AuthVisual } from "@/components/auth/auth-visual";
 import { AuthBrand } from "@/components/auth/auth-brand";
+import { AuthorizationReturnNotice } from "@/components/auth/authorization-return-notice";
 import { ExternalReturn } from "@/components/auth/external-return";
 import { getAuthSession } from "@/lib/server/auth-session";
 import { safeReturnTo } from "@/lib/server/safe-return-to";
 import { isGitHubConfigured } from "@/lib/server/github-auth";
 import { isGoogleConfigured } from "@/lib/server/google-auth";
+import { isWorkBuddyLoginConfigured } from "@/lib/server/workbuddy-oauth";
 import { isRegistrationEnabled } from "@/lib/server/auth-config";
-
-function DataTalkLogo() {
-  return (
-    <div className="flex h-[54px] w-[54px] items-center justify-center" aria-hidden="true">
-      <svg viewBox="0 0 54 54" className="h-full w-full" fill="none">
-        <rect x="1" y="1" width="52" height="52" rx="10" fill="#F7FBFF" stroke="#BBD7FF" />
-        <path d="M14 14v26M24 14v26M34 14v26M40 14H14M40 25H14M40 36H14" stroke="#D6E8FF" strokeWidth="1.4" />
-        <path d="M12 35.5 22 25l8 5 12-13" stroke="#2167E8" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="12" cy="35.5" r="4" fill="#52CDE5" stroke="white" strokeWidth="2" />
-        <circle cx="22" cy="25" r="4" fill="#2167E8" stroke="white" strokeWidth="2" />
-        <circle cx="30" cy="30" r="4" fill="#756CF4" stroke="white" strokeWidth="2" />
-        <circle cx="42" cy="17" r="4" fill="#18B981" stroke="white" strokeWidth="2" />
-        <path d="m32.5 33.5 8 8.5-5.5-1.4-2.2 5.4-2.3-1 2.2-5.2-4.3-2.2 4.1-4.1Z" fill="#17243A" />
-      </svg>
-    </div>
-  );
-}
 
 function ReportPreview() {
   const bars = [56, 88, 70, 112, 96];
@@ -97,9 +82,18 @@ function ReportPreview() {
   );
 }
 
-export default async function HomePage({ searchParams }: { searchParams?: Promise<{ next?: string }> }) {
+export default async function HomePage({ searchParams }: { searchParams?: Promise<{ next?: string; workbuddy_login?: string }> }) {
   const session = await getAuthSession();
-  const { next } = (await searchParams) || {};
+  const { next, workbuddy_login } = (await searchParams) || {};
+  const workBuddyErrors: Record<string, string> = {
+    access_denied: "已取消 WorkBuddy 登录，你可以重新尝试或选择其他登录方式。",
+    invalid_state: "WorkBuddy 登录请求已过期，请重新发起。",
+    not_configured: "WorkBuddy 登录暂未启用，请选择其他登录方式。",
+    identity_conflict: "此 WorkBuddy 身份存在其他账号关联，请使用原登录方式登录后处理绑定。",
+    account_disabled: "该账号或工作空间已停用，请联系管理员。",
+    account_changed: "Studio 账号状态已变化，请重新继续。",
+    login_failed: "WorkBuddy 登录未完成，请稍后重试或选择其他登录方式。",
+  };
 
   if (session) {
     const target = safeReturnTo(next);
@@ -118,17 +112,18 @@ export default async function HomePage({ searchParams }: { searchParams?: Promis
 
       <div className="relative mx-auto flex min-h-screen w-full min-w-0 max-w-[1216px] items-center px-5 py-10 sm:px-8 lg:px-0">
         <div className="grid min-w-0 w-full grid-cols-1 items-center gap-12 lg:grid-cols-[438px_minmax(0,1fr)] lg:gap-[75px]">
-          <section style={{ width: "calc(100vw - 2.5rem)", maxWidth: "438px" }} className="min-h-0 min-w-0 justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-9 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:w-full sm:px-[50px] sm:py-11 lg:min-h-[540px] lg:justify-self-start">
+          <section style={{ width: "calc(100vw - 2.5rem)", maxWidth: "438px" }} className="min-h-0 min-w-0 justify-self-center rounded-lg border border-white/80 bg-white/[.96] px-7 py-8 shadow-[0_24px_64px_rgba(38,91,158,0.10),0_-1px_0_rgba(255,255,255,0.8)] sm:w-full sm:px-[50px] sm:py-8 lg:justify-self-start">
             <AuthBrand />
 
-            <div className="mt-8 flex items-center">
+            <div className="mt-6 flex items-center">
               <h1 className="text-[30px] font-bold leading-none tracking-[-0.04em] text-[#17243A]">登录工作台</h1>
             </div>
 
-            <LoginForm returnTo={next} registrationEnabled={isRegistrationEnabled()} githubEnabled={isGitHubConfigured()} googleEnabled={isGoogleConfigured()} />
+            <AuthorizationReturnNotice returnTo={next} />
+            <LoginForm returnTo={next} registrationEnabled={isRegistrationEnabled()} githubEnabled={isGitHubConfigured()} googleEnabled={isGoogleConfigured()} workbuddyEnabled={isWorkBuddyLoginConfigured()} loginError={workBuddyErrors[workbuddy_login || ""]} />
           </section>
 
-          <section className="min-w-0" aria-label="DataTalk 产品介绍">
+          <section className="min-w-0" aria-label="DataTalk Studio产品介绍">
             <AuthVisual mode="login" />
           </section>
         </div>

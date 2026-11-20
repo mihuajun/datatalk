@@ -1,3 +1,5 @@
+import { getReportPreviewSession } from "@/lib/server/studio-preview";
+import { assertSameOrigin, apiErrorResponse } from "@/lib/server/open-api-auth";
 import { NextResponse } from "next/server";
 
 import { getAuthSession } from "@/lib/server/auth-session";
@@ -31,10 +33,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!source) return NextResponse.json({ message: "source 不正确" }, { status: 400 });
   const runtimeTarget = parseRuntimeTarget(body.runtimeTarget);
 
-  const session = await getAuthSession();
+  const session = source === "working" ? await getReportPreviewSession(reportCode) || await getAuthSession() : await getAuthSession();
 
   try {
     if (source === "working") {
+      try { assertSameOrigin(request); } catch(e) { return apiErrorResponse(e); }
       if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
       const target = await getTenantReportRuntimeTarget(session.tenantId, reportCode);
       if (!target) return NextResponse.json({ message: "报表不存在" }, { status: 404 });
@@ -45,7 +48,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         dataId,
         filters: body.filters,
       });
-      return NextResponse.json({ data });
+      return NextResponse.json({ data }, { headers: { "Cache-Control":"private, no-store" } });
     }
 
     if (!runtimeTarget && !session) {
@@ -69,7 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       dataId,
       filters: body.filters,
     });
-    return NextResponse.json({ data });
+    return NextResponse.json({ data }, { headers: { "Cache-Control":"private, no-store" } });
   } catch (error) {
     return NextResponse.json({ message: error instanceof Error ? error.message : "运行时数据请求失败" }, { status: 400 });
   }

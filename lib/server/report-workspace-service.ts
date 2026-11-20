@@ -1,3 +1,4 @@
+import { finalizeMetricKnowledgeProposals, parseMetricBindings } from "@/lib/server/report-metric-knowledge-service";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -136,7 +137,20 @@ function validateWorkingChangeSet(changeSet: ReportChangeSet, tenantId: number, 
   }
 }
 
-export async function applyReportChanges(input: { tenantId: number; reportCode: string; userId: number; changeSet: ReportChangeSet; message: string; baseCommitHash?: string; lockToken?: string; auditAction?: "ai_edit" | "rollback" }) {
+async function completeMetricCommit(input: { tenantId: number; reportCode: string; metricSessionId?: string }, opId: string) {
+  try {
+    const document = JSON.parse(await fs.readFile(resolveReportSourcePath(input.tenantId,input.reportCode,"report.json"),"utf8"));
+    return await finalizeMetricKnowledgeProposals({ tenantId: input.tenantId, reportCode: input.reportCode,
+      dshSessionId: input.metricSessionId || `commit:${opId}`, opId, bindings: parseMetricBindings(document.metricBindings) });
+  } catch (error) {
+    // Git and the database cannot share a transaction. Preserve the committed report and
+    // expose a retryable metric failure, rather than report success for unpublished semantics.
+    console.error("[metric-commit] publication pending", { opId, error });
+    return { pending: true as const, message: "报表已提交，但指标事务未完成；定义和引用未成功生效，请重新检索并提交。" };
+  }
+}
+
+export async function applyReportChanges(input: { preserveSourceBytes?: boolean; metricSessionId?: string; tenantId: number; reportCode: string; userId: number; changeSet: ReportChangeSet; message: string; baseCommitHash?: string; lockToken?: string; auditAction?: "ai_edit" | "rollback" }) {
   await assertReportEditLock(input.tenantId, input.reportCode, input.userId, input.lockToken);
   const report = await ensureReportOwnership(input.tenantId, input.reportCode); validateChangeSet(input.changeSet);
   const base = await getWorkspaceHead(input.tenantId, input.reportCode);
@@ -152,12 +166,15 @@ export async function applyReportChanges(input: { tenantId: number; reportCode: 
       const reportPath = resolveReportSourcePath(input.tenantId, input.reportCode, "report.json");
       const reportDocument = JSON.parse(await fs.readFile(reportPath, "utf8")) as Record<string, unknown>;
       if (reportDocument.schemaVersion === "1.0" && reportDocument.entry === "page.html") {
-        reportDocument.updatedAt = new Date().toISOString();
-        if (input.changeSet.files["page.html"] !== undefined) {
-          reportDocument.entry = "page.html";
-          reportDocument.format = "web";
+        // Uploaded source must remain byte-identical; timestamps are tracked in DB/Git.
+        if (!input.preserveSourceBytes) {
+          reportDocument.updatedAt = new Date().toISOString();
+          if (input.changeSet.files["page.html"] !== undefined) {
+            reportDocument.entry = "page.html";
+            reportDocument.format = "web";
+          }
+          await writeReportSourceFile(input.tenantId, input.reportCode, "report.json", `${JSON.stringify(reportDocument, null, 2)}\n`);
         }
-        await writeReportSourceFile(input.tenantId, input.reportCode, "report.json", `${JSON.stringify(reportDocument, null, 2)}\n`);
       }
     } catch {
       throw auditError("REPORT_METADATA_UPDATE_FAILED");
@@ -180,7 +197,7 @@ export async function applyReportChanges(input: { tenantId: number; reportCode: 
       await getDbPool().execute("INSERT INTO report_pending_audit (tenant_id, report_code, audit_id, commit_hash, error_message) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE commit_hash=VALUES(commit_hash), error_message=VALUES(error_message), status='pending'", [input.tenantId, input.reportCode, auditId, commitHash, errorMessage]);
       throw auditError("AUDIT_PENDING");
     }
-      return { auditId, opId, commitHash, validation };
+      return { auditId, opId, commitHash, validation, metricKnowledge: await completeMetricCommit(input,opId) };
   } catch (error) {
     if (base && !commitHash) await restoreWorkspace(input.tenantId, input.reportCode, base);
     const errorMessage = String(error instanceof Error ? error.message : error).slice(0, 500);
@@ -190,6 +207,7 @@ export async function applyReportChanges(input: { tenantId: number; reportCode: 
 }
 
 export async function commitRuntimeWorkspaceChanges(input: {
+  metricSessionId?: string;
   tenantId: number;
   reportCode: string;
   userId: number;
@@ -228,7 +246,7 @@ export async function commitRuntimeWorkspaceChanges(input: {
     commitHash = await commitWorkspace(input.tenantId, input.reportCode, input.message, opId, "working");
     await getDbPool().execute("UPDATE report_edit_audit SET status='success', commit_hash=? WHERE id=?", [commitHash, auditId]);
     await getDbPool().execute("UPDATE tenant_report SET working_commit_hash=?, current_working_revision=current_working_revision+1 WHERE tenant_id=? AND code=? AND deleted_at IS NULL", [commitHash, input.tenantId, input.reportCode]);
-      return { auditId, opId, commitHash, validation, changedFiles, deletedFiles, actualFiles };
+      return { auditId, opId, commitHash, validation, changedFiles, deletedFiles, actualFiles, metricKnowledge: await completeMetricCommit(input,opId) };
   } catch (error) {
     if (base && !commitHash) await restoreWorkspace(input.tenantId, input.reportCode, base);
     const errorMessage = String(error instanceof Error ? error.message : error).slice(0, 500);
@@ -271,6 +289,27 @@ export async function rollbackReportEdit(tenantId: number, reportCode: string, u
   const result = await applyReportChanges({ tenantId, reportCode, userId, changeSet: { files: {} }, message: "rollback report edit", baseCommitHash: target, lockToken, auditAction: "rollback" });
   if (before && result.commitHash === before) throw auditError("ROLLBACK_FAILED");
   return result;
+}
+
+/** Reconstruct the current branch from successful report-scoped audit records. */
+export async function readReportEditHistory(tenantId: number, reportCode: string, head: string | null) {
+  const [rows] = await getDbPool().query<Array<RowDataPacket & { id: number; commit_hash: string; base_commit_hash: string | null; action: string }>>(
+    "SELECT id, commit_hash, base_commit_hash, action FROM report_edit_audit WHERE tenant_id=? AND report_code=? AND status='success' AND commit_hash IS NOT NULL ORDER BY id DESC LIMIT 100",
+    [tenantId, reportCode],
+  );
+  const byCommit = new Map(rows.map(row => [row.commit_hash, row]));
+  const entries: Array<{commitHash: string; auditId: number; label: string}> = [];
+  const seen = new Set<string>();
+  let cursor = head;
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const row = byCommit.get(cursor);
+    if (!row?.base_commit_hash) break;
+    // A restore commit has the same content as its target, not a new user edit.
+    if (row.action !== "rollback") entries.unshift({commitHash: cursor, auditId: Number(row.id), label: "报表修改"});
+    cursor = row.base_commit_hash;
+  }
+  return { initialCommitHash: cursor, entries };
 }
 
 export async function restoreReportEditToCommit(input: { tenantId: number; reportCode: string; userId: number; targetCommitHash: string; lockToken?: string }) {

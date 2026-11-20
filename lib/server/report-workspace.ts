@@ -1,3 +1,4 @@
+import { reportDevelopmentRoot } from "@/lib/server/report-development-context";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -55,7 +56,7 @@ export function getReportWorkspacePath(tenantId: number, reportCode: string) {
 }
 
 export function getReportWorkingPath(tenantId: number, reportCode: string) {
-  return path.join(getReportWorkspacePath(tenantId, reportCode), "working");
+  return reportDevelopmentRoot(tenantId, reportCode) || path.join(getReportWorkspacePath(tenantId, reportCode), "working");
 }
 
 export function resolveReportWorkingPath(tenantId: number, reportCode: string, fileName: string) {
@@ -75,7 +76,7 @@ export function resolveReportSourcePath(tenantId: number, reportCode: string, fi
     throw new Error("REPORT_FILE_NOT_ALLOWED");
   }
   const root = getReportWorkspacePath(tenantId, reportCode);
-  return path.join(root, version == null ? "working" : path.join("releases", `v${version}`), normalized);
+  return version == null ? path.join(getReportWorkingPath(tenantId, reportCode), normalized) : path.join(root, "releases", `v${version}`, normalized);
 }
 
 function seededReportTitle(reportCode: string, definition?: unknown) {

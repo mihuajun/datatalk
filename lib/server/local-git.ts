@@ -22,6 +22,10 @@ async function ensureGitMetadata(cwd: string) {
   const ignorePath = `${cwd}/.gitignore`;
   let content = "";
   try { content = await fs.readFile(ignorePath, "utf8"); } catch { /* create below */ }
+  if (!content.includes("/.development/")) {
+    content = `${content.trimEnd()}\n/.development/\n`;
+    await fs.writeFile(ignorePath, content);
+  }
   if (!content.includes("*/runtime/")) {
     await fs.writeFile(ignorePath, content ? `${content.trimEnd()}\n${GITIGNORE}` : GITIGNORE);
   }

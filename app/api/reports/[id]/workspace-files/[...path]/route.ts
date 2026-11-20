@@ -1,3 +1,4 @@
+import { getReportPreviewSession } from "@/lib/server/studio-preview";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -46,12 +47,12 @@ function contentDisposition(fileName: string, disposition: "attachment" | "inlin
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string; path: string[] }> }) {
-  const session = await getAuthSession();
-  if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
-
   const routeParams = await params;
   const reportCode = parseReportCode(routeParams.id);
   if (!reportCode) return NextResponse.json({ message: "报表编码不正确" }, { status: 400 });
+
+  const session = await getReportPreviewSession(reportCode) || await getAuthSession();
+  if (!session) return NextResponse.json({ message: "未登录" }, { status: 401 });
 
   const relativePath = Array.isArray(routeParams.path) ? routeParams.path.join("/") : "";
   if (!isAllowedReportAiArtifactPath(relativePath)) {

@@ -1,5 +1,7 @@
 # DataTalk Studio
 
+DataTalk Studio是 AI 原生的数据分析与报表开发工作台。连接业务数据，用对话完成分析，把结果保存为可持续使用的报表与看板。
+
 **中文** | [English](README.md)
 
 > 用对话完成报表开发。DataTalk Studio is an AI-native BI workspace for building, editing, validating, sharing, and reusing data reports.
@@ -175,7 +177,7 @@ config/config.yaml
 | `GOOGLE_REDIRECT_URI` | 当前请求域名下的 `/api/auth/google/callback` | 可选；生产环境建议显式配置完整回调地址 |
 | `PUBLIC_LINK_SECRET` | 自动生成 | 公开链接访问 Cookie 的签名密钥；多实例部署时应保持一致 |
 | `REPORT_AGENT_TOOL_SECRET` | 自动生成 | Agent 工具令牌签名密钥；多实例部署时应保持一致 |
-| `REPORT_EDIT_LOCK_ENABLED` | `false` | 是否启用报表编辑锁 |
+| `REPORT_EDIT_LOCK_ENABLED` | `false` | 是否启用网页与 MCP 共享的报表编辑互斥锁；关闭只是不加锁，不会禁止有写权限的 MCP 编辑 |
 | `RESOURCE_CENTER_ENABLED` | `false` | 是否启用资源中心相关能力 |
 | `AUTO_INIT_DATABASE` | 开启 | 设置为 `false`、`0` 或 `off` 可关闭启动时数据库初始化 |
 | `WEB_SEARCH_API_KEY` | 空 | 可选的 Web 搜索能力凭据；不要提交到仓库 |

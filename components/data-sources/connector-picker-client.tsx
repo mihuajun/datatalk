@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, Check, Database, Search } from "lucide-react";
+import { ArrowLeft, Check, Clock3, Database, Search } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -23,7 +23,7 @@ function ConnectorLogo({ item }: { item: ConnectorCatalogItem }) {
 
   return (
     <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-white shadow-[0_3px_12px_rgba(23,36,58,0.08)]" style={{ backgroundColor: `${item.color}16` }}>
-      {failed ? (
+      {failed || item.category === "应用数据" ? (
         <span className="text-[13px] font-extrabold tracking-[-0.04em]" style={{ color: item.color }}>{item.monogram}</span>
       ) : (
         <img src={item.iconPath} alt="" aria-hidden="true" className="h-7 w-7 object-contain" onError={() => setFailed(true)} />
@@ -54,9 +54,10 @@ export function ConnectorPickerClient() {
     })).filter((group) => group.items.length > 0);
   }, [query]);
 
-  const supportedCount = CONNECTOR_CATALOG.length;
+  const supportedCount = CONNECTOR_CATALOG.filter((item) => item.supported).length;
 
   function selectConnector(item: ConnectorCatalogItem) {
+    if (!item.supported) return;
     setSelectedConnector(item);
     setForm(createDataSourceForm(item.type));
     setError(null);
@@ -173,15 +174,16 @@ export function ConnectorPickerClient() {
                 <button
                   key={item.type}
                   type="button"
+                  disabled={!item.supported}
                   onClick={() => selectConnector(item)}
-                  className="group relative flex min-h-[152px] flex-col justify-between overflow-hidden rounded-lg border border-[#DDE5F0] bg-white p-4 text-left transition hover:-translate-y-0.5 hover:border-[#9DBFF7] hover:shadow-[0_10px_24px_rgba(33,103,232,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2167E8]/40"
-                  aria-label={`选择${item.name}连接器`}
+                  className={`group relative flex min-h-[152px] flex-col justify-between overflow-hidden rounded-lg border border-[#DDE5F0] bg-white p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2167E8]/40 ${item.supported ? "hover:-translate-y-0.5 hover:border-[#9DBFF7] hover:shadow-[0_10px_24px_rgba(33,103,232,0.10)]" : "cursor-not-allowed"}`}
+                  aria-label={item.supported ? `选择${item.name}连接器` : `${item.name}连接器，待开放`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <ConnectorLogo item={item} />
-                    <span className="inline-flex items-center gap-1 rounded-full bg-[#EAF8F2] px-2 py-1 text-[10px] font-bold text-[#16845B]">
-                      <Check className="h-3 w-3" />
-                      已支持
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${item.supported ? "bg-[#EAF8F2] text-[#16845B]" : "bg-[#FFF4DE] text-[#996300]"}`}>
+                      {item.supported ? <Check className="h-3 w-3" /> : <Clock3 className="h-3 w-3" />}
+                      {item.supported ? "已支持" : "待开放"}
                     </span>
                   </div>
                   <div className="mt-4">
@@ -190,7 +192,7 @@ export function ConnectorPickerClient() {
                   </div>
                   <div className="mt-4 flex items-center justify-between text-[11px] font-semibold text-[#A2AEBD]">
                     <span>{item.category}</span>
-                    <span className="text-[#2167E8] opacity-0 transition group-hover:opacity-100">配置连接器 →</span>
+                    {item.supported ? <span className="text-[#2167E8] opacity-0 transition group-hover:opacity-100">配置连接器 →</span> : <span>暂未开放接入</span>}
                   </div>
                 </button>
               ))}

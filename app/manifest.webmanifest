@@ -1,0 +1,32 @@
+{
+  "name": "DataTalk Studio",
+  "short_name": "Studio",
+  "icons": [
+    {
+      "src": "/brand/icon-192-cobalt-v1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon-512-cobalt-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/maskable-192-cobalt-v1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/brand/maskable-512-cobalt-v1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "theme_color": "#3454D1",
+  "background_color": "#F5F7FC"
+}

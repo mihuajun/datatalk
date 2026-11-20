@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Building2, CalendarDays, Check, Eye, FileBarChart2, FolderTree, Heart, LoaderCircle, RefreshCw, Sparkles, UploadCloud } from "lucide-react";
 
+import { WebViewSelect } from "./webview-select";
 import { RESOURCE_ASSET_TYPE_LABELS, type ResourceAssetType, type ResourceCategoryOption, type ResourceCategoryRecommendation } from "@/lib/resource-center-types";
 
 type ResourcePublishFormValue = {
@@ -13,6 +14,7 @@ type ResourcePublishFormValue = {
 };
 
 type ResourcePublishPanelProps = {
+  compact?: boolean;
   visible: boolean;
   saving: boolean;
   buttonLabel: string;
@@ -31,6 +33,7 @@ type ResourcePublishPanelProps = {
 };
 
 export function ResourcePublishPanel({
+  compact = false,
   visible,
   saving,
   buttonLabel,
@@ -47,6 +50,7 @@ export function ResourcePublishPanel({
   onRecommend,
   onSubmit,
 }: ResourcePublishPanelProps) {
+  const Select = compact ? WebViewSelect : "select";
   const categories = categoriesByType[form.assetType] || [];
   const industries = categories.filter((category) => category.level === 0);
   const selectedCategory = categories.find((category) => String(category.id) === form.categoryId);
@@ -67,7 +71,7 @@ export function ResourcePublishPanel({
       <button
         type="button"
         onClick={onToggle}
-        className={`inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-xs font-semibold transition ${
+        className={`inline-flex ${compact ? "h-7 px-2.5 font-medium" : "h-9 px-3 font-semibold"} items-center gap-1.5 rounded-md border text-xs transition ${
           visible
             ? "border-[#A7C4F7] bg-[#EDF3FF] text-[#2167E8]"
             : "border-[#DDE5F0] bg-white text-[#526174] hover:border-[#2167E8] hover:text-[#2167E8]"
@@ -79,7 +83,7 @@ export function ResourcePublishPanel({
         {buttonLabel}
       </button>
       {visible ? (
-        <div className="absolute right-0 top-[42px] z-30 flex max-h-[calc(100dvh-96px)] w-[min(760px,calc(100vw-32px))] flex-col rounded-lg border border-[#DDE5F0] bg-white shadow-[0_18px_40px_rgba(23,36,58,0.14)]">
+        <div className={`absolute right-0 ${compact ? "top-[34px]" : "top-[42px]"} z-30 flex max-h-[calc(100dvh-96px)] w-[min(760px,calc(100vw-32px))] flex-col rounded-lg border border-[#DDE5F0] bg-white shadow-[0_18px_40px_rgba(23,36,58,0.14)]`}>
           <div className="shrink-0 border-b border-[#E7EDF5] px-4 py-3 text-sm font-bold text-[#17243A]">{buttonLabel}</div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -87,7 +91,7 @@ export function ResourcePublishPanel({
               <div className="min-w-0 space-y-3">
             <label className="block">
               <span className="text-[11px] font-semibold text-[#526174]">发布类型</span>
-              <select
+              <Select
                 value={form.assetType}
                 onChange={(event) => onChange("assetType", event.target.value)}
                 className="mt-1.5 h-10 w-full rounded-md border border-[#DDE5F0] bg-white px-3 text-[13px] text-[#17243A] outline-none transition focus:border-[#2167E8] focus:ring-4 focus:ring-[#2167E8]/10"
@@ -95,7 +99,7 @@ export function ResourcePublishPanel({
                 {(Object.entries(RESOURCE_ASSET_TYPE_LABELS) as Array<[ResourceAssetType, string]>).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             <div className="block">
@@ -130,7 +134,7 @@ export function ResourcePublishPanel({
                 ) : null}
               </div>
               <div className="mt-1.5 grid grid-cols-2 gap-2">
-                <select
+                <Select
                   value={selectedIndustryId ? String(selectedIndustryId) : ""}
                   onChange={(event) => onChange("categoryId", event.target.value)}
                   aria-label="一级分类"
@@ -141,8 +145,8 @@ export function ResourcePublishPanel({
                   {industries.map((category) => (
                     <option key={category.id} value={String(category.id)}>{category.name}</option>
                   ))}
-                </select>
-                <select
+                </Select>
+                <Select
                   value={selectedCategory?.level === 1 ? form.categoryId : ""}
                   onChange={(event) => onChange("categoryId", event.target.value || String(selectedIndustryId))}
                   disabled={!selectedIndustryId || subcategories.length === 0}
@@ -154,7 +158,7 @@ export function ResourcePublishPanel({
                   {subcategories.map((category) => (
                     <option key={category.id} value={String(category.id)}>{category.name}</option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
 

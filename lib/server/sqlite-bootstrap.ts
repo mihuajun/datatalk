@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tenant_user (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id INTEGER NOT NULL,
   name TEXT NOT NULL,
+  avatar TEXT,
   username TEXT NOT NULL,
   phone TEXT,
   email TEXT,
@@ -45,6 +46,15 @@ CREATE TABLE IF NOT EXISTS tenant_user (
   salt TEXT,
   status INTEGER NOT NULL DEFAULT 1,
   last_active TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS studio_conversation_quota (
+  tenant_id INTEGER PRIMARY KEY,
+  available_count INTEGER NOT NULL DEFAULT 0 CHECK (available_count >= 0),
+  granted_count INTEGER NOT NULL DEFAULT 0,
+  consumed_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -261,14 +271,16 @@ CREATE TABLE IF NOT EXISTS tenant_metric_knowledge (
   aliases_json TEXT NOT NULL,
   normalized_aliases_json TEXT NOT NULL,
   search_text TEXT NOT NULL,
-  definition_json TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'verified',
+  content TEXT NOT NULL,
+  keywords_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
   version INTEGER NOT NULL DEFAULT 1,
   fingerprint TEXT NOT NULL,
   source_report_code TEXT,
   source_conversation_id TEXT,
   source_op_id TEXT,
   created_by INTEGER,
+  updated_by INTEGER,
   accepted_count INTEGER NOT NULL DEFAULT 0,
   rejected_count INTEGER NOT NULL DEFAULT 0,
   last_used_at TEXT,
@@ -289,7 +301,8 @@ CREATE TABLE IF NOT EXISTS report_metric_knowledge_proposal (
   normalized_name TEXT NOT NULL,
   aliases_json TEXT NOT NULL,
   normalized_aliases_json TEXT NOT NULL,
-  definition_json TEXT NOT NULL,
+  content TEXT NOT NULL,
+  keywords_json TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
   action TEXT NOT NULL,
   confirmed INTEGER NOT NULL DEFAULT 0,
@@ -299,6 +312,7 @@ CREATE TABLE IF NOT EXISTS report_metric_knowledge_proposal (
   published_version INTEGER,
   source_op_id TEXT,
   created_by INTEGER,
+  updated_by INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -710,6 +724,9 @@ export async function initializeSqliteDatabase(config: SqliteDatabaseConfig) {
     addColumnIfMissing(database, "tenant_report", "deleted_at", "TEXT");
     addColumnIfMissing(database, "tenant_report", "deleted_by", "INTEGER");
     addColumnIfMissing(database, "tenant_user", "phone", "TEXT");
+    addColumnIfMissing(database, "tenant_user", "avatar", "TEXT");
+    addColumnIfMissing(database, "tenant_metric_knowledge", "updated_by", "INTEGER");
+    addColumnIfMissing(database, "report_metric_knowledge_proposal", "updated_by", "INTEGER");
     database.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_user_phone ON tenant_user(phone)");
     addColumnIfMissing(database, "report_release", "thumbnail_url", "TEXT");
     addColumnIfMissing(database, "report_release", "publisher_tenant_name", "TEXT");
@@ -753,6 +770,10 @@ export async function initializeSqliteDatabase(config: SqliteDatabaseConfig) {
     database.exec("BEGIN IMMEDIATE");
     try {
       seedTenant(database);
+      database.exec(`
+        INSERT OR IGNORE INTO studio_conversation_quota (tenant_id, available_count, granted_count)
+        SELECT id, 10, 10 FROM tenant
+      `);
       seedDefaultUsers(database);
       seedReports(database);
       seedReleaseCategories(database);

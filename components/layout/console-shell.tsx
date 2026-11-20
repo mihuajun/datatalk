@@ -1,25 +1,32 @@
 "use client";
+import { BrandMark } from "@/components/shared/brand-mark";
+import { UserAvatar } from "@/components/auth/user-avatar";
 
 import type { KeyboardEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BarChart3,
+  BookOpenCheck,
   Cable,
   ChevronDown,
   Command,
   RefreshCw,
   Settings2,
+  KeyRound,
+  MessageCircle,
   Sparkles,
   Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-import { canAccessMembersRole, getUserRoleLabel, isAdministratorRole } from "@/lib/auth/roles";
+import { canAccessMembersRole, getUserRoleLabel } from "@/lib/auth/roles";
 import type { AuthSession } from "@/lib/server/auth-session";
 const navItems = [
   { href: "/reports", label: "报表中心", icon: BarChart3 },
+  { href: "/metrics", label: "指标语义", icon: BookOpenCheck },
   { href: "/data-sources", label: "连接器", icon: Cable },
+  { href: "/api-management", label: "API 管理", icon: KeyRound },
   { href: "/members", label: "用户管理", icon: Users },
   { href: "/settings", label: "系统设置", icon: Settings2 },
 ];
@@ -29,16 +36,30 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [conversationQuota, setConversationQuota] = useState<{ enabled: boolean; remainingCount: number } | null>(null);
   const visibleNavItems = navItems.filter(({ href }) => {
-    if (href === "/settings") return session ? isAdministratorRole(session.role) : false;
+    if (href === "/settings") return session ? session.role === "administrator" : false;
     if (href === "/members") return session ? canAccessMembersRole(session.role) : false;
-    return href === "/reports" || href === "/data-sources";
+    return href === "/reports" || href === "/metrics" || href === "/data-sources" || (href === "/api-management" && Boolean(session));
   });
   const isReportsPage = pathname === "/reports";
   const isReportEditorPage = pathname.startsWith("/reports/editor");
   const isReportPreviewPage = pathname.startsWith("/preview/");
   const isReportViewPage = pathname.startsWith("/view/");
   const isPublicReportPage = pathname.startsWith("/link/") || pathname.startsWith("/share/");
+
+  useEffect(() => {
+    let active = true;
+    setConversationQuota(null);
+    void fetch("/api/conversation-quota", { headers: { Accept: "application/json" }, cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() as Promise<{ enabled?: boolean; remainingCount?: number }> : null)
+      .then((result) => {
+        if (!active || !result?.enabled) return;
+        setConversationQuota({ enabled: true, remainingCount: Math.max(0, Number(result.remainingCount) || 0) });
+      })
+      .catch((error) => console.warn("读取对话配额失败", error));
+    return () => { active = false; };
+  }, [pathname]);
 
   async function handleLogout() {
     setUserMenuOpen(false);
@@ -63,7 +84,7 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
     return <main className="h-screen max-h-screen min-h-0 min-w-0 overflow-hidden">{children}</main>;
   }
 
-  if (isPublicReportPage || isReportPreviewPage || isReportViewPage) {
+  if (isPublicReportPage || isReportPreviewPage || isReportViewPage || pathname.startsWith("/oauth/")) {
     return <main className="min-h-screen min-w-0 overflow-x-clip">{children}</main>;
   }
 
@@ -71,15 +92,10 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
     <div className="console-canvas min-h-screen text-[#17243A] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="console-sidebar flex min-h-screen flex-col bg-[#111D31] px-5 py-7 text-white">
         <div className="console-brand flex items-center gap-3 px-1">
-          <img
-            src="/icon.svg"
-            alt=""
-            aria-hidden="true"
-            className="h-11 w-11 rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.16)]"
-          />
+          <BrandMark inverse size={44} className="h-11 w-11 shrink-0" />
           <div>
-            <div className="text-[17px] font-extrabold tracking-[-0.02em] text-white">DataTalk</div>
-            <div className="mt-0.5 text-[10px] text-[#8b9ab1]">AI 驱动报表开发</div>
+            <div className="text-[15px] font-extrabold tracking-[-0.02em] text-white">DataTalk Studio</div>
+            <div className="mt-0.5 text-[10px] text-[#8b9ab1]">数据分析与报表开发</div>
           </div>
         </div>
 
@@ -112,6 +128,12 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setUserMenuOpen(false);
             }}
           >
+            {conversationQuota?.enabled ? (
+              <div className="mb-2 flex h-9 items-center justify-between rounded-md border border-white/[.07] bg-white/[.035] px-2.5" aria-label={`剩余对话次数 ${conversationQuota.remainingCount} 次`}>
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-[#aebbd0]"><MessageCircle className="h-3.5 w-3.5 text-[#78a9ff]" />剩余对话次数</span>
+                <span className="text-[13px] font-semibold tabular-nums text-white">{conversationQuota.remainingCount}<span className="ml-0.5 text-[10px] font-normal text-[#8b9ab1]">次</span></span>
+              </div>
+            ) : null}
             {userMenuOpen ? (
               <div className="absolute bottom-[calc(100%+10px)] left-0 z-30 w-full rounded-[9px] border border-white/10 bg-[#1c2b43] p-1.5 shadow-[0_14px_32px_rgba(0,0,0,0.26)]" role="menu" aria-label="用户菜单">
                 <div className="border-b border-white/10 px-3 py-2.5 text-xs text-[#9aabc4]">已登录为 {session.name || session.username}</div>
@@ -135,9 +157,7 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
               aria-haspopup="menu"
               aria-label={`打开用户菜单，当前用户 ${session.name || session.username}`}
             >
-              <span className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-full bg-[#e3edff] text-xs font-bold text-[#2167E8]">
-                {(session.name || session.username).slice(0, 1)}
-              </span>
+              <UserAvatar avatar={session.avatar} name={session.name || session.username} />
               <span className="min-w-0 flex-1 truncate"><span className="block text-sm font-semibold text-white">{session.name || session.username}</span><span className="mt-0.5 block text-[11px] text-[#8b9ab1]">{getUserRoleLabel(session.role)}</span></span>
               <ChevronDown className={`h-4 w-4 text-[#9aabc4] transition-transform ${userMenuOpen ? "rotate-180" : ""}`} />
             </button>
@@ -150,7 +170,7 @@ export function ConsoleShell({ children, session }: { children: ReactNode; sessi
           <header className="console-toolbar flex items-center justify-between gap-4 px-5 sm:px-7">
             <div className="flex min-w-0 items-center gap-3">
               <span className="flex h-7 w-7 items-center justify-center rounded-[7px] bg-[#e7f2ff] text-[#2167E8]"><BarChart3 className="h-4 w-4" /></span>
-              <div className="flex min-w-0 items-baseline gap-2.5"><span className="truncate text-[19px] font-extrabold tracking-[-0.03em] text-[#17243A]">报表中心</span><span className="hidden text-xs text-[#8190a5] sm:inline">用对话完成报表开发</span></div>
+              <div className="flex min-w-0 items-baseline gap-2.5"><span className="truncate text-[19px] font-extrabold tracking-[-0.03em] text-[#17243A]">报表中心</span><span className="hidden text-xs text-[#8190a5] sm:inline">AI 原生的数据分析与报表开发工作台</span></div>
             </div>
             <div className="flex items-center gap-2.5">
               <label className="hidden h-9 w-[300px] items-center gap-2 rounded-[7px] border border-[#dce5f0] bg-white px-3 text-xs text-[#9aa8ba] lg:flex"><Command className="h-3.5 w-3.5" /><input className="min-w-0 flex-1 border-0 bg-transparent outline-none placeholder:text-[#9aa8ba]" placeholder="搜索报表、文件夹，或输入快捷指令" /><span className="text-[10px]">⌘ K</span></label>
